@@ -393,8 +393,8 @@ public class SelectStatement implements CQLStatement
         // We can't properly do post-query ordering if we page (see #6722)
         // For GROUP BY or aggregation queries we always page internally even if the user has turned paging off
         checkFalse(pageSize > 0 && needsPostQueryOrdering(),
-                  "Cannot page queries with both ORDER BY and a IN restriction on the partition key;"
-                  + " you must either remove the ORDER BY or the IN and sort client side, or disable paging for this query");
+                   "Cannot page queries with both ORDER BY and a IN restriction on the partition key;"
+                   + " you must either remove the ORDER BY or the IN and sort client side, or disable paging for this query");
 
         ResultMessage.Rows msg;
         try (PartitionIterator page = pager.fetchPage(pageSize, queryStartNanoTime))
@@ -541,10 +541,10 @@ public class SelectStatement implements CQLStatement
         ColumnFilter columnFilter = selection.newSelectors(options).getColumnFilter();
         ClusteringIndexFilter filter = makeClusteringIndexFilter(options, columnFilter);
         if (filter instanceof ClusteringIndexSliceFilter)
-            return ((ClusteringIndexSliceFilter)filter).requestedSlices();
+            return ((ClusteringIndexSliceFilter) filter).requestedSlices();
 
         Slices.Builder builder = new Slices.Builder(table.comparator);
-        for (Clustering clustering: ((ClusteringIndexNamesFilter)filter).requestedRows())
+        for (Clustering clustering : ((ClusteringIndexNamesFilter) filter).requestedRows())
             builder.add(Slice.make(clustering));
         return builder.build();
     }
@@ -585,7 +585,7 @@ public class SelectStatement implements CQLStatement
             return ReadQuery.empty(table);
 
         ReadQuery command =
-            PartitionRangeReadQuery.create(table, nowInSec, columnFilter, rowFilter, limit, new DataRange(keyBounds, clusteringIndexFilter));
+        PartitionRangeReadQuery.create(table, nowInSec, columnFilter, rowFilter, limit, new DataRange(keyBounds, clusteringIndexFilter));
 
         // If there's a secondary index that the command can use, have it validate the request parameters.
         command.maybeValidateIndex();
@@ -640,8 +640,8 @@ public class SelectStatement implements CQLStatement
             ClusteringBound start = startBounds.first();
             ClusteringBound end = endBounds.first();
             return Slice.isEmpty(table.comparator, start, end)
-                 ? Slices.NONE
-                 : Slices.with(table.comparator, Slice.make(start, end));
+                   ? Slices.NONE
+                   : Slices.with(table.comparator, Slice.make(start, end));
         }
 
         Slices.Builder builder = new Slices.Builder(table.comparator, startBounds.size());
@@ -796,7 +796,7 @@ public class SelectStatement implements CQLStatement
         ByteBuffer key = dk.getKey();
         if (metadata.partitionKeyType instanceof CompositeType)
         {
-            return ((CompositeType)metadata.partitionKeyType).split(key);
+            return ((CompositeType) metadata.partitionKeyType).split(key);
         }
         else
         {
@@ -842,7 +842,7 @@ public class SelectStatement implements CQLStatement
                             addValue(result, def, staticRow, nowInSec, protocolVersion);
                             break;
                         default:
-                            result.add((ByteBuffer)null);
+                            result.add((ByteBuffer) null);
                     }
                 }
             }
@@ -852,7 +852,7 @@ public class SelectStatement implements CQLStatement
         while (partition.hasNext())
         {
             Row row = partition.next();
-            result.newRow( partition.partitionKey(), row.clustering());
+            result.newRow(partition.partitionKey(), row.clustering());
             // Respect selection order
             for (ColumnMetadata def : selection.getColumns())
             {
@@ -950,6 +950,7 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
+            validateAliases();
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
             List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
@@ -1010,6 +1011,41 @@ public class SelectStatement implements CQLStatement
                                        prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
         }
 
+        private void validateAliases()
+        {
+
+            ColumnIdentifier alias = qualifiedName.getAlias();
+            selectClause.stream().forEach(selector -> {
+                if (selector.selectable instanceof Selectable.RawIdentifier)
+                {
+                    ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getAlias();
+                    checkTrue(Objects.equals(selectableAlias, alias),
+                              "Undefined table alias %s for selection %s", selectableAlias, selector.selectable);
+                }
+            });
+
+            whereClause.relations.stream().forEach(relation -> {
+                if (relation instanceof SingleColumnRelation)
+                {
+                    SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
+                    ColumnMetadata.Raw.Literal entity = (ColumnMetadata.Raw.Literal) singleColumnRelation.getEntity();
+                    checkTrue(Objects.equals(entity.getAlias(), alias),
+                              "Undefined table alias %s for relation %s", entity.getAlias(), relation);
+                }
+                if (relation instanceof MultiColumnRelation)
+                {
+                    MultiColumnRelation multiColumnRelation = (MultiColumnRelation) relation;
+                    multiColumnRelation.getEntities()
+                                       .stream()
+                                       .map(ColumnMetadata.Raw.Literal.class::cast)
+                                       .forEach(entity -> {
+                                           checkTrue(Objects.equals(entity.getAlias(), alias),
+                                                     "Undefined table alias %s for relation %s", entity.getAlias(), relation);
+                                       });
+                }
+            });
+        }
+
         private Selection prepareSelection(TableMetadata table,
                                            List<Selectable> selectables,
                                            VariableSpecifications boundNames,
@@ -1036,7 +1072,7 @@ public class SelectStatement implements CQLStatement
         /**
          * Checks if the specified selectables select only partition key columns or static columns
          *
-         * @param table the table metadata
+         * @param table       the table metadata
          * @param selectables the selectables to check
          * @return {@code true} if the specified selectables select only partition key columns or static columns,
          * {@code false} otherwise.
@@ -1047,7 +1083,7 @@ public class SelectStatement implements CQLStatement
                 return false;
 
             return Selectable.selectColumns(selectables, (column) -> column.isStatic())
-                    && !Selectable.selectColumns(selectables, (column) -> !column.isPartitionKey() && !column.isStatic());
+                   && !Selectable.selectColumns(selectables, (column) -> !column.isPartitionKey() && !column.isStatic());
         }
 
         /**
@@ -1070,8 +1106,8 @@ public class SelectStatement implements CQLStatement
         /**
          * Prepares the restrictions.
          *
-         * @param metadata the column family meta data
-         * @param boundNames the variable specifications
+         * @param metadata                 the column family meta data
+         * @param boundNames               the variable specifications
          * @param selectsOnlyStaticColumns {@code true} if the query select only static columns, {@code false} otherwise.
          * @return the restrictions
          * @throws InvalidRequestException if a problem occurs while building the restrictions
@@ -1111,7 +1147,7 @@ public class SelectStatement implements CQLStatement
         private static void validateDistinctSelection(TableMetadata metadata,
                                                       Selection selection,
                                                       StatementRestrictions restrictions)
-                                                      throws InvalidRequestException
+        throws InvalidRequestException
         {
             checkFalse(restrictions.hasClusteringColumnsRestrictions() ||
                        (restrictions.hasNonPrimaryKeyRestrictions() && !restrictions.nonPKRestrictedColumns(true).stream().allMatch(ColumnMetadata::isStatic)),
@@ -1136,10 +1172,10 @@ public class SelectStatement implements CQLStatement
         /**
          * Creates the <code>AggregationSpecification</code>s used to make the aggregates.
          *
-         * @param metadata the table metadata
-         * @param selection the selection
+         * @param metadata     the table metadata
+         * @param selection    the selection
          * @param restrictions the restrictions
-         * @param isDistinct <code>true</code> if the query is a DISTINCT one.
+         * @param isDistinct   <code>true</code> if the query is a DISTINCT one.
          * @return the <code>AggregationSpecification</code>s used to make the aggregates
          */
         private AggregationSpecification getAggregationSpecification(TableMetadata metadata,
@@ -1193,7 +1229,7 @@ public class SelectStatement implements CQLStatement
         private Comparator<List<ByteBuffer>> getOrderingComparator(Selection selection,
                                                                    StatementRestrictions restrictions,
                                                                    Map<ColumnMetadata, Boolean> orderingColumns)
-                                                                   throws InvalidRequestException
+        throws InvalidRequestException
         {
             if (!restrictions.keyIsInRelation())
                 return null;
@@ -1207,7 +1243,7 @@ public class SelectStatement implements CQLStatement
                 sorters.add(orderingColumn.type);
             }
             return idToSort.size() == 1 ? new SingleColumnComparator(idToSort.get(0), sorters.get(0))
-                    : new CompositeComparator(sorters, idToSort);
+                                        : new CompositeComparator(sorters, idToSort);
         }
 
         private boolean isReversed(TableMetadata table, Map<ColumnMetadata, Boolean> orderingColumns, StatementRestrictions restrictions) throws InvalidRequestException
@@ -1369,7 +1405,7 @@ public class SelectStatement implements CQLStatement
             return 0;
         }
     }
-    
+
     @Override
     public String toString()
     {

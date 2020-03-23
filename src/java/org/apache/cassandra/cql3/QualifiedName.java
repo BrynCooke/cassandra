@@ -30,6 +30,7 @@ public class QualifiedName
      */
     private String keyspace;
     private String name;
+    private ColumnIdentifier alias;
 
     public QualifiedName()
     {
@@ -53,6 +54,17 @@ public class QualifiedName
     }
 
     /**
+     * Sets the alias.
+     *
+     * @param alias the alias
+     */
+    public final void setAlias(ColumnIdentifier alias)
+    {
+        this.alias = alias;
+    }
+
+
+    /**
      * Checks if the keyspace is specified.
      * @return <code>true</code> if the keyspace is specified, <code>false</code> otherwise.
      */
@@ -64,6 +76,20 @@ public class QualifiedName
     public final String getKeyspace()
     {
         return keyspace;
+    }
+
+    /**
+     * Checks if the alias is specified.
+     * @return <code>true</code> if the alias is specified, <code>false</code> otherwise.
+     */
+    public final boolean hasAlias()
+    {
+        return alias != null;
+    }
+
+    public final ColumnIdentifier getAlias()
+    {
+        return alias;
     }
 
     public void setName(String cf, boolean keepCase)
@@ -79,15 +105,30 @@ public class QualifiedName
     @Override
     public String toString()
     {
-        return hasKeyspace()
-             ? String.format("%s.%s", keyspace, name)
-             : name;
+        if (hasKeyspace() || hasAlias())
+        {
+            StringBuilder builder = new StringBuilder();
+            if (hasKeyspace())
+            {
+                builder.append(keyspace);
+                builder.append(".");
+            }
+            builder.append(name);
+            if (hasAlias())
+            {
+                builder.append("(");
+                builder.append(alias);
+                builder.append(")");
+            }
+            return builder.toString();
+        }
+        return name;
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(keyspace, name);
+        return Objects.hash(keyspace, name, alias);
     }
 
     public boolean equals(Object o)
@@ -99,7 +140,7 @@ public class QualifiedName
             return false;
 
         QualifiedName qn = (QualifiedName) o;
-        return Objects.equals(keyspace, qn.keyspace) && name.equals(qn.name);
+        return Objects.equals(keyspace, qn.keyspace) && name.equals(qn.name) && Objects.equals(alias, qn.alias);
     }
 
     /**

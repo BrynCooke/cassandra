@@ -1182,27 +1182,29 @@ public interface Selectable extends AssignmentTestable
         private final String text;
 
         private final boolean quoted;
+        private ColumnIdentifier alias;
 
         /**
          * Creates a {@code RawIdentifier} from an unquoted identifier string.
          */
-        public static Raw forUnquoted(String text)
+        public static Raw forUnquoted(String text, ColumnIdentifier alias)
         {
-            return new RawIdentifier(text, false);
+            return new RawIdentifier(text, false, alias);
         }
 
         /**
          * Creates a {@code RawIdentifier} from a quoted identifier string.
          */
-        public static Raw forQuoted(String text)
+        public static Raw forQuoted(String text, ColumnIdentifier alias)
         {
-            return new RawIdentifier(text, true);
+            return new RawIdentifier(text, true, alias);
         }
 
-        private RawIdentifier(String text, boolean quoted)
+        private RawIdentifier(String text, boolean quoted, ColumnIdentifier alias)
         {
             this.text = text;
             this.quoted = quoted;
+            this.alias = alias;
         }
 
         @Override
@@ -1219,10 +1221,15 @@ public interface Selectable extends AssignmentTestable
                           : FieldIdentifier.forUnquoted(text);
         }
 
+        public ColumnIdentifier getAlias()
+        {
+            return alias;
+        }
+
         @Override
         public String toString()
         {
-            return text;
+            return alias == null ? text : (alias + "." + text);
         }
     }
 
