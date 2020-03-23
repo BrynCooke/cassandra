@@ -207,6 +207,11 @@ K_DEFAULT:     D E F A U L T;
 K_UNSET:       U N S E T;
 K_LIKE:        L I K E;
 
+K_JOIN:        J O I N;
+K_INNER:       I N N E R;
+K_LEFT:        L E F T;
+K_RIGHT:       R I G H T;
+
 // Case-insensitive alpha characters
 fragment A: ('a'|'A');
 fragment B: ('b'|'B');

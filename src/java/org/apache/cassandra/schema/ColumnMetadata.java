@@ -537,6 +537,8 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
 
         public abstract String rawText();
 
+        public abstract ColumnIdentifier getAlias();
+
         @Override
         public abstract ColumnMetadata prepare(TableMetadata table);
 
@@ -669,6 +671,11 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
             public String rawText()
             {
                 return column.name.toString();
+            }
+
+            public ColumnIdentifier getAlias()
+            {
+                return null;
             }
 
             @Override

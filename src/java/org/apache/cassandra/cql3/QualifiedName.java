@@ -116,9 +116,8 @@ public class QualifiedName
             builder.append(name);
             if (hasAlias())
             {
-                builder.append("(");
+                builder.append(" AS ");
                 builder.append(alias);
-                builder.append(")");
             }
             return builder.toString();
         }

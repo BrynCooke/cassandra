@@ -3187,4 +3187,51 @@ public class SelectTest extends CQLTester
     }
 
 
+    @Test
+    public void testJoins() throws Throwable
+    {
+        String t1 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
+        String t2 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
+        String t3 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
+
+        execute(String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
+                              "INNER JOIN %s.%s AS t2 ON t1.v2 = t2.k1 AND t1.v1 = t2.v1 " +
+                              "INNER JOIN %s.%s AS t3 ON t2.v2 = t3.k1 " +
+                              "WHERE t1.k1 = ? AND t3.v1 = ?",
+                              keyspace(), t1,
+                              keyspace(), t2,
+                              keyspace(), t3), 5, 2);
+
+        execute(String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
+                              "LEFT JOIN %s.%s AS t2 ON t1.v2 = t2.k1 AND t1.v1 = t2.v1 " +
+                              "RIGHT JOIN %s.%s AS t3 ON t2.v2 = t3.k1 " +
+                              "WHERE t1.k1 = ? AND t3.v1 = ?",
+                              keyspace(), t1,
+                              keyspace(), t2,
+                              keyspace(), t3), 5, 2);
+
+        assertInvalidMessage(String.format("Undefined column t3.v7 in INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v7", keyspace(), t3),
+                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
+                              "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 " +
+                              "INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v7",
+                              keyspace(), t1,
+                              keyspace(), t2,
+                              keyspace(), t3));
+
+        assertInvalidMessage(String.format("Undefined table alias t7 in INNER JOIN %s.%s AS t3 ON t2.k1 = t7.v2", keyspace(), t3),
+                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
+                              "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 " +
+                              "INNER JOIN %s.%s AS t3 ON t2.k1 = t7.v2",
+                              keyspace(), t1,
+                              keyspace(), t2,
+                              keyspace(), t3));
+
+        assertInvalidMessage(String.format("Two tables must be referenced in INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 AND t1.k1 = t3.v2", keyspace(), t2),
+                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 AND t1.k1 = t3.v2 " +
+                                           "INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v2",
+                              keyspace(), t1,
+                              keyspace(), t2,
+                              keyspace(), t3));
+    }
 }

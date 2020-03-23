@@ -265,6 +265,7 @@ selectStatement returns [SelectStatement.RawStatement expr]
     @init {
         Term.Raw limit = null;
         Term.Raw perPartitionLimit = null;
+        List<Join.Raw> joins = new ArrayList<>();
         Map<ColumnMetadata.Raw, Boolean> orderings = new LinkedHashMap<>();
         List<ColumnMetadata.Raw> groups = new ArrayList<>();
         boolean allowFiltering = false;
@@ -274,6 +275,7 @@ selectStatement returns [SelectStatement.RawStatement expr]
         // json is a valid column name. By consequence, we need to resolve the ambiguity for "json - json"
       ( (K_JSON selectClause)=> K_JSON { isJson = true; } )? sclause=selectClause
       K_FROM cf=aliasedColumnFamilyName
+      ( joinClause[joins] )*
       ( K_WHERE wclause=whereClause )?
       ( K_GROUP K_BY groupByClause[groups] ( ',' groupByClause[groups] )* )?
       ( K_ORDER K_BY orderByClause[orderings] ( ',' orderByClause[orderings] )* )?
@@ -287,9 +289,30 @@ selectStatement returns [SelectStatement.RawStatement expr]
                                                                              allowFiltering,
                                                                              isJson);
           WhereClause where = wclause == null ? WhereClause.empty() : wclause.build();
-          $expr = new SelectStatement.RawStatement(cf, params, $sclause.selectors, where, limit, perPartitionLimit);
+          $expr = new SelectStatement.RawStatement(cf, params, $sclause.selectors, joins, where, limit, perPartitionLimit);
       }
     ;
+
+joinClause [List<Join.Raw> joins]
+    @init {
+       Join.Type joinType = null;
+       List<Pair<ColumnMetadata.Raw, ColumnMetadata.Raw>> joinColumns = new ArrayList<>();
+    }
+    //Inner left and right joins must have a join column specified.
+    : ( K_INNER             { joinType = Join.Type.Inner; }
+    | K_LEFT                { joinType = Join.Type.Left; }
+    | K_RIGHT               { joinType = Join.Type.Right; })
+    K_JOIN cf=aliasedColumnFamilyName K_ON joinColumn[joinColumns] (K_AND joinColumn[joinColumns])*
+    {
+        joins.add(new Join.Raw(joinType, cf, joinColumns));
+    };
+
+joinColumn [List<Pair<ColumnMetadata.Raw, ColumnMetadata.Raw>> joinColumns]
+    //Inner left and right joins must have a join column specified.
+    : jc1=select_cident '=' jc2=select_cident
+    {
+        joinColumns.add(Pair.create(jc1, jc2));
+    };
 
 selectClause returns [boolean isDistinct, List<RawSelector> selectors]
     @init{ $isDistinct = false; }

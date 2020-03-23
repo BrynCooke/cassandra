@@ -170,6 +170,7 @@ public class View
                 new SelectStatement.RawStatement(new QualifiedName(baseCfs.keyspace.getName(), baseCfs.name),
                                                  parameters,
                                                  selectClause(),
+                                                 Collections.emptyList(),
                                                  definition.whereClause,
                                                  null,
                                                  null);
