@@ -18,12 +18,18 @@
  */
 package org.apache.cassandra.cql3.selection;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 
+import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.ColumnIdentifier;
+
+import static org.apache.cassandra.cql3.selection.Selectable.RawIdentifier.forQuoted;
 
 
 public class RawSelector
@@ -45,7 +51,22 @@ public class RawSelector
      */
     public static List<Selectable> toSelectables(List<RawSelector> raws, final TableMetadata table)
     {
-        return Lists.transform(raws, raw -> raw.prepare(table));
+        return raws.stream()
+                   .flatMap(raw -> {
+                       if (raw.selectable instanceof Selectable.RawIdentifier
+                           && ((Selectable.RawIdentifier) raw.selectable).isWildCard())
+                       {
+                           Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) raw.selectable;
+                           ArrayList<ColumnMetadata> columnMetadata = Lists.newArrayList(table.allColumnsInSelectOrder());
+                           return columnMetadata.stream().map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), null));
+                       }
+                       else
+                       {
+                           return Stream.of(raw);
+                       }
+                   })
+                   .map(s -> s.prepare(table))
+                   .collect(Collectors.toList());
     }
 
     private Selectable prepare(TableMetadata table)

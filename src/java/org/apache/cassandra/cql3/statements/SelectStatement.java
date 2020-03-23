@@ -950,6 +950,7 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
+            validateAliases();
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
             List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
@@ -1010,6 +1011,57 @@ public class SelectStatement implements CQLStatement
                                        prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
         }
 
+        private void validateAliases()
+        {
+
+            ColumnIdentifier alias = qualifiedName.getAlias();
+            selectClause.stream().forEach(selector -> {
+                if (selector.selectable instanceof Selectable.RawIdentifier)
+                {
+                    ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getTableAlias();
+                    checkTrue(Objects.equals(selectableAlias, alias),
+                              "Undefined table alias %s for selection %s", defaultAlias(selectableAlias), selector.selectable);
+                }
+            });
+
+            whereClause.relations.stream().forEach(relation -> {
+                if (relation instanceof SingleColumnRelation)
+                {
+                    SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
+                    ColumnMetadata.Raw.Literal entity = (ColumnMetadata.Raw.Literal) singleColumnRelation.getEntity();
+                    checkTrue(Objects.equals(entity.getTableAlias(), alias),
+                              "Undefined table alias %s for relation %s", defaultAlias(entity.getTableAlias()), relation);
+                }
+                if (relation instanceof MultiColumnRelation)
+                {
+                    MultiColumnRelation multiColumnRelation = (MultiColumnRelation) relation;
+                    multiColumnRelation.getEntities()
+                                       .stream()
+                                       .map(ColumnMetadata.Raw.Literal.class::cast)
+                                       .forEach(entity -> {
+                                           checkTrue(Objects.equals(entity.getTableAlias(), alias),
+                                                     "Undefined table alias %s for relation %s", defaultAlias(entity.getTableAlias()), relation);
+                                       });
+                    long count = multiColumnRelation.getEntities()
+                                                    .stream()
+                                                    .map(ColumnMetadata.Raw.Literal.class::cast)
+                                                    .map(ColumnMetadata.Raw.Literal::getTableAlias)
+                                                    .distinct()
+                                                    .count();
+                    checkTrue(count == 1, "More than one table was aliased in condition %s", relation);
+                }
+            });
+        }
+
+        private Object defaultAlias(ColumnIdentifier tableAlias)
+        {
+            if (tableAlias == null)
+            {
+                return "<default>";
+            }
+            return tableAlias;
+        }
+
         private Selection prepareSelection(TableMetadata table,
                                            List<Selectable> selectables,
                                            VariableSpecifications boundNames,
@@ -1017,12 +1069,6 @@ public class SelectStatement implements CQLStatement
                                            StatementRestrictions restrictions)
         {
             boolean hasGroupBy = !parameters.groups.isEmpty();
-
-            if (selectables.isEmpty()) // wildcard query
-            {
-                return hasGroupBy ? Selection.wildcardWithGroupBy(table, boundNames, parameters.isJson)
-                                  : Selection.wildcard(table, parameters.isJson);
-            }
 
             return Selection.fromSelectors(table,
                                            selectables,
@@ -1369,7 +1415,7 @@ public class SelectStatement implements CQLStatement
             return 0;
         }
     }
-    
+
     @Override
     public String toString()
     {

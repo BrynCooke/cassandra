@@ -273,7 +273,7 @@ selectStatement returns [SelectStatement.RawStatement expr]
     : K_SELECT
         // json is a valid column name. By consequence, we need to resolve the ambiguity for "json - json"
       ( (K_JSON selectClause)=> K_JSON { isJson = true; } )? sclause=selectClause
-      K_FROM cf=columnFamilyName
+      K_FROM cf=aliasedColumnFamilyName
       ( K_WHERE wclause=whereClause )?
       ( K_GROUP K_BY groupByClause[groups] ( ',' groupByClause[groups] )* )?
       ( K_ORDER K_BY orderByClause[orderings] ( ',' orderByClause[orderings] )* )?
@@ -300,12 +300,12 @@ selectClause returns [boolean isDistinct, List<RawSelector> selectors]
 
 selectors returns [List<RawSelector> expr]
     : t1=selector { $expr = new ArrayList<RawSelector>(); $expr.add(t1); } (',' tN=selector { $expr.add(tN); })*
-    | '\*' { $expr = Collections.<RawSelector>emptyList();}
     ;
 
 selector returns [RawSelector s]
     @init{ ColumnIdentifier alias = null; }
-    : us=unaliasedSelector (K_AS c=noncol_ident { alias = c; })? { $s = new RawSelector(us, alias); }
+    : us=swildcard { $s = new RawSelector(us, alias); }
+    | us=unaliasedSelector (K_AS c=noncol_ident { alias = c; })? { $s = new RawSelector(us, alias); }
     ;
 
 unaliasedSelector returns [Selectable.Raw s]
@@ -435,10 +435,14 @@ selectionFunctionArgs returns [List<Selectable.Raw> a]
     ;
 
 sident returns [Selectable.Raw id]
-    : t=IDENT              { $id = Selectable.RawIdentifier.forUnquoted($t.text); }
-    | t=QUOTED_NAME        { $id = Selectable.RawIdentifier.forQuoted($t.text); }
-    | k=unreserved_keyword { $id = Selectable.RawIdentifier.forUnquoted(k); }
+    : (a=noncol_ident '.')? t=IDENT              { $id = Selectable.RawIdentifier.forUnquoted($t.text, a); }
+    | (a=noncol_ident '.')? t=QUOTED_NAME        { $id = Selectable.RawIdentifier.forQuoted($t.text, a); }
+    | (a=noncol_ident '.')? k=unreserved_keyword { $id = Selectable.RawIdentifier.forUnquoted(k, a); }
     ;
+
+swildcard returns [Selectable.Raw id]
+        : (a=noncol_ident '.')? '\*'             { $id = Selectable.RawIdentifier.forWildcard(a); }
+        ;
 
 whereClause returns [WhereClause.Builder clause]
     @init{ $clause = new WhereClause.Builder(); }
@@ -459,11 +463,11 @@ orderByClause[Map<ColumnMetadata.Raw, Boolean> orderings]
     @init{
         boolean reversed = false;
     }
-    : c=cident (K_ASC | K_DESC { reversed = true; })? { orderings.put(c, reversed); }
+    : c=select_cident (K_ASC | K_DESC { reversed = true; })? { orderings.put(c, reversed); }
     ;
 
 groupByClause[List<ColumnMetadata.Raw> groups]
-    : c=cident { groups.add(c); }
+    : c=select_cident { groups.add(c); }
     ;
 
 /**
@@ -860,7 +864,7 @@ createMaterializedViewStatement returns [CreateViewStatement.Raw stmt]
         boolean ifNotExists = false;
     }
     : K_CREATE K_MATERIALIZED K_VIEW (K_IF K_NOT K_EXISTS { ifNotExists = true; })? cf=columnFamilyName K_AS
-        K_SELECT sclause=selectors K_FROM basecf=columnFamilyName
+        K_SELECT sclause=selectors K_FROM basecf=aliasedColumnFamilyName
         (K_WHERE wclause=whereClause)?
         {
              WhereClause where = wclause == null ? WhereClause.empty() : wclause.build();
@@ -1314,6 +1318,13 @@ cident returns [ColumnMetadata.Raw id]
     | k=unreserved_keyword { $id = ColumnMetadata.Raw.forUnquoted(k); }
     ;
 
+select_cident returns [ColumnMetadata.Raw id]
+    : EMPTY_QUOTED_NAME    { $id = ColumnMetadata.Raw.forQuoted(""); }
+    | (a=noncol_ident '.')? t=IDENT              { $id = ColumnMetadata.Raw.forUnquoted($t.text, a); }
+    | (a=noncol_ident '.')? t=QUOTED_NAME        { $id = ColumnMetadata.Raw.forQuoted($t.text, a); }
+    | (a=noncol_ident '.')? k=unreserved_keyword { $id = ColumnMetadata.Raw.forUnquoted(k, a); }
+    ;
+
 schema_cident returns [ColumnMetadata.Raw id]
     : t=IDENT              { $id = ColumnMetadata.Raw.forUnquoted($t.text); }
     | t=QUOTED_NAME        { $id = ColumnMetadata.Raw.forQuoted($t.text); }
@@ -1355,6 +1366,10 @@ columnFamilyName returns [QualifiedName name]
     @init { $name = new QualifiedName(); }
     : (ksName[name] '.')? cfName[name]
     ;
+
+aliasedColumnFamilyName returns [QualifiedName name]
+        : cfn = columnFamilyName  K_AS? (a=noncol_ident)? { cfn.setAlias(a); $name = cfn; }
+        ;
 
 userTypeName returns [UTName name]
     : (ks=noncol_ident '.')? ut=non_type_ident { $name = new UTName(ks, ut); }
@@ -1639,17 +1654,17 @@ relationType returns [Operator op]
     ;
 
 relation[WhereClause.Builder clauses]
-    : name=cident type=relationType t=term { $clauses.add(new SingleColumnRelation(name, type, t)); }
-    | name=cident K_LIKE t=term { $clauses.add(new SingleColumnRelation(name, Operator.LIKE, t)); }
-    | name=cident K_IS K_NOT K_NULL { $clauses.add(new SingleColumnRelation(name, Operator.IS_NOT, Constants.NULL_LITERAL)); }
+    : name=select_cident type=relationType t=term { $clauses.add(new SingleColumnRelation(name, type, t)); }
+    | name=select_cident K_LIKE t=term { $clauses.add(new SingleColumnRelation(name, Operator.LIKE, t)); }
+    | name=select_cident K_IS K_NOT K_NULL { $clauses.add(new SingleColumnRelation(name, Operator.IS_NOT, Constants.NULL_LITERAL)); }
     | K_TOKEN l=tupleOfIdentifiers type=relationType t=term
         { $clauses.add(new TokenRelation(l, type, t)); }
-    | name=cident K_IN marker=inMarker
+    | name=select_cident K_IN marker=inMarker
         { $clauses.add(new SingleColumnRelation(name, Operator.IN, marker)); }
-    | name=cident K_IN inValues=singleColumnInValues
+    | name=select_cident K_IN inValues=singleColumnInValues
         { $clauses.add(SingleColumnRelation.createInRelation($name.id, inValues)); }
-    | name=cident rt=containsOperator t=term { $clauses.add(new SingleColumnRelation(name, rt, t)); }
-    | name=cident '[' key=term ']' type=relationType t=term { $clauses.add(new SingleColumnRelation(name, key, type, t)); }
+    | name=select_cident rt=containsOperator t=term { $clauses.add(new SingleColumnRelation(name, rt, t)); }
+    | name=select_cident '[' key=term ']' type=relationType t=term { $clauses.add(new SingleColumnRelation(name, key, type, t)); }
     | ids=tupleOfIdentifiers
       ( K_IN
           ( '(' ')'
@@ -1684,7 +1699,7 @@ inMarker returns [AbstractMarker.INRaw marker]
 
 tupleOfIdentifiers returns [List<ColumnMetadata.Raw> ids]
     @init { $ids = new ArrayList<ColumnMetadata.Raw>(); }
-    : '(' n1=cident { $ids.add(n1); } (',' ni=cident { $ids.add(ni); })* ')'
+    : '(' n1=select_cident { $ids.add(n1); } (',' ni=select_cident { $ids.add(ni); })* ')'
     ;
 
 singleColumnInValues returns [List<Term.Raw> terms]

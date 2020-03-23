@@ -22,6 +22,7 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.text.StrBuilder;
 
 import org.apache.cassandra.cql3.*;
@@ -1182,32 +1183,42 @@ public interface Selectable extends AssignmentTestable
         private final String text;
 
         private final boolean quoted;
+        private final boolean wildCard;
+        private ColumnIdentifier tableAlias;
+
+        public static Raw forWildcard(ColumnIdentifier tableAlias)
+        {
+            return new RawIdentifier(true, "*", false, tableAlias);
+        }
 
         /**
          * Creates a {@code RawIdentifier} from an unquoted identifier string.
          */
-        public static Raw forUnquoted(String text)
+        public static Raw forUnquoted(String text, ColumnIdentifier tableAlias)
         {
-            return new RawIdentifier(text, false);
+            return new RawIdentifier(false, text, false, tableAlias);
         }
 
         /**
          * Creates a {@code RawIdentifier} from a quoted identifier string.
          */
-        public static Raw forQuoted(String text)
+        public static Raw forQuoted(String text, ColumnIdentifier tableAlias)
         {
-            return new RawIdentifier(text, true);
+            return new RawIdentifier(false, text, true, tableAlias);
         }
 
-        private RawIdentifier(String text, boolean quoted)
+        private RawIdentifier(boolean wildCard, String text, boolean quoted, ColumnIdentifier tableAlias)
         {
+            this.wildCard = wildCard;
             this.text = text;
             this.quoted = quoted;
+            this.tableAlias = tableAlias;
         }
 
         @Override
         public Selectable prepare(TableMetadata cfm)
         {
+            Preconditions.checkState(!isWildCard(), "Wildcards should have been expanded");
             ColumnMetadata.Raw raw = quoted ? ColumnMetadata.Raw.forQuoted(text)
                                             : ColumnMetadata.Raw.forUnquoted(text);
             return raw.prepare(cfm);
@@ -1219,10 +1230,20 @@ public interface Selectable extends AssignmentTestable
                           : FieldIdentifier.forUnquoted(text);
         }
 
+        public ColumnIdentifier getTableAlias()
+        {
+            return tableAlias;
+        }
+
+        public boolean isWildCard()
+        {
+            return wildCard;
+        }
+
         @Override
         public String toString()
         {
-            return text;
+            return tableAlias == null ? text : (tableAlias + "." + text);
         }
     }
 

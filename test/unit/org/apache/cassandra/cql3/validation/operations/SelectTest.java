@@ -3159,4 +3159,34 @@ public class SelectTest extends CQLTester
         execute("INSERT INTO %s (k1, k2) VALUES (uuid(), 'k2')");
         assertRowCount(execute("SELECT system.token(k1, k2) FROM %s"), 1);
     }
+
+    @Test
+    public void testTableAliasing() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
+        execute("SELECT a.k1 AS b FROM %s AS a WHERE a.k1=1");
+        execute("SELECT \"a\".k1 FROM %s \"a\" WHERE \"a\".k1=1");
+        execute("SELECT a.* FROM %s a WHERE a.k1 = 1");
+        execute("SELECT a.* FROM %s a WHERE a.k1 > 1 ALLOW FILTERING");
+        execute("SELECT a.* FROM %s a WHERE a.k1 >= 1 ALLOW FILTERING");
+        execute("SELECT a.* FROM %s a WHERE a.k1 < 1 ALLOW FILTERING");
+        execute("SELECT a.* FROM %s a WHERE a.k1 <= 1 ALLOW FILTERING");
+        execute("SELECT a.* FROM %s a WHERE a.k1 IN (2, 3, 4) ALLOW FILTERING");
+        execute("SELECT a.* FROM %s a WHERE a.k1=1 ORDER BY a.v1");
+        execute("SELECT a.* FROM %s a WHERE a.k1=1 GROUP BY a.v1");
+
+        assertInvalidMessage("Undefined table alias a for selection a.k1",
+                             "SELECT a.k1 AS b FROM %s AS b WHERE a.k1=1");
+        assertInvalidMessage("Undefined table alias <default> for selection *",
+                             "SELECT * FROM %s AS a WHERE a.k1=1");
+        assertInvalidMessage("Undefined table alias a for relation a.k1 = 1",
+                             "SELECT b.k1 AS b FROM %s AS b WHERE a.k1=1");
+        assertInvalidMessage("Undefined table alias a for relation (a.k1, a.k2) > (1, 'a')",
+                             "SELECT COUNT(b.k1) AS b FROM %s AS b WHERE (a.k1, a.k2) > (1, 'a')");
+        assertInvalidMessage("Undefined table alias <default> for relation k1 = 1",
+                             "SELECT a.k1 AS b FROM %s AS a WHERE k1=1");
+
+    }
+
+
 }
