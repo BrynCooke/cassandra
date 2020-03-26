@@ -132,7 +132,8 @@ public class SelectStatement implements CQLStatement
                            AggregationSpecification aggregationSpec,
                            Comparator<List<ByteBuffer>> orderingComparator,
                            Term limit,
-                           Term perPartitionLimit)
+                           Term perPartitionLimit,
+                           List<Join> joins)
     {
         this.table = table;
         this.bindVariables = bindVariables;
@@ -201,7 +202,8 @@ public class SelectStatement implements CQLStatement
                                    null,
                                    null,
                                    null,
-                                   null);
+                                   null,
+                                   Collections.emptyList());
     }
 
     public ResultSet.ResultMetadata getResultMetadata()
@@ -958,9 +960,39 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
+            if (joinClauses.isEmpty())
+            {
+                return prepareRegularSelect(forView);
+            }
+            else
+            {
+                return prepareJoinSelect();
+            }
+        }
+
+        public int getBindVariablesSize()
+        {
+            return bindVariables.getBindVariables().size();
+        }
+
+        private SelectStatement prepareJoinSelect()
+        {
             TableResolver tableResolver = new TableResolver(Schema.instance, qualifiedName, joinClauses);
             validateAliases(tableResolver);
             validateJoins(tableResolver);
+
+            Join.Raw raw = new Join.Raw(Join.Type.Primary, qualifiedName, Collections.emptyList());
+            Join primary = raw.prepare(tableResolver, this);
+
+            List<Join> joins = joinClauses.stream()
+                                          .map(join -> join.prepare(tableResolver, this))
+                                          .collect(Collectors.toList());
+            SelectStatement select = primary.getSelect();
+            return select;
+        }
+
+        private SelectStatement prepareRegularSelect(boolean forView)
+        {
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
             List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
@@ -1018,8 +1050,10 @@ public class SelectStatement implements CQLStatement
                                        aggregationSpec,
                                        orderingComparator,
                                        prepareLimit(bindVariables, limit, keyspace(), limitReceiver()),
-                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
+                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()),
+                                       Collections.emptyList());
         }
+
 
         private void validateJoins(TableResolver tableResolver)
         {
@@ -1062,7 +1096,7 @@ public class SelectStatement implements CQLStatement
                     SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
                     ColumnIdentifier alias = singleColumnRelation.getEntity().getAlias();
                     checkNotNull(tableResolver.resolveTable(alias),
-                              "Undefined table alias %s for relation %s", alias, relation);
+                              "Undefined table alias %s in condition %s", alias, relation);
                 }
                 if (relation instanceof MultiColumnRelation)
                 {
@@ -1073,8 +1107,15 @@ public class SelectStatement implements CQLStatement
                                        .forEach(entity -> {
                                            ColumnIdentifier alias = entity.getAlias();
                                            checkNotNull(tableResolver.resolveTable(alias),
-                                                        "Undefined table alias %s for relation %s", alias, relation);
+                                                        "Undefined table alias %s in condition %s", alias, relation);
                                        });
+                    long count = multiColumnRelation.getEntities()
+                                                    .stream()
+                                                    .map(ColumnMetadata.Raw.Literal.class::cast)
+                                                    .map(ColumnMetadata.Raw.Literal::getAlias)
+                                                    .distinct()
+                                                    .count();
+                    checkTrue(count == 1,"More than one table was aliased in condition %s", relation);
                 }
             });
         }
@@ -1121,6 +1162,7 @@ public class SelectStatement implements CQLStatement
 
         /**
          * Returns the columns used to order the data.
+         *
          * @return the columns used to order the data.
          */
         private Map<ColumnMetadata, Boolean> getOrderingColumns(TableMetadata table)
@@ -1159,7 +1201,9 @@ public class SelectStatement implements CQLStatement
                                              forView);
         }
 
-        /** Returns a Term for the limit or null if no limit is set */
+        /**
+         * Returns a Term for the limit or null if no limit is set
+         */
         private Term prepareLimit(VariableSpecifications boundNames, Term.Raw limit,
                                   String keyspace, ColumnSpecification limitReceiver) throws InvalidRequestException
         {
