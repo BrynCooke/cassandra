@@ -29,7 +29,6 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.cql3.selection.Join;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
@@ -131,7 +130,8 @@ public class SelectStatement implements CQLStatement
                            AggregationSpecification aggregationSpec,
                            Comparator<List<ByteBuffer>> orderingComparator,
                            Term limit,
-                           Term perPartitionLimit)
+                           Term perPartitionLimit,
+                           List<Join> joins)
     {
         this.table = table;
         this.bindVariables = bindVariables;
@@ -200,7 +200,8 @@ public class SelectStatement implements CQLStatement
                                    null,
                                    null,
                                    null,
-                                   null);
+                                   null,
+                                   Collections.emptyList());
     }
 
     public ResultSet.ResultMetadata getResultMetadata()
@@ -927,7 +928,7 @@ public class SelectStatement implements CQLStatement
     {
         public final Parameters parameters;
         public final List<RawSelector> selectClause;
-        private List<Join.Raw> joinClauses;
+        public final List<Join.Raw> joinClauses;
         public final WhereClause whereClause;
         public final Term.Raw limit;
         public final Term.Raw perPartitionLimit;
@@ -956,9 +957,34 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
-            TableResolver tableResolver = new TableResolver(Schema.instance, qualifiedName, joinClauses);
+            TableResolver tableResolver = new TableResolver(qualifiedName, joinClauses);
             validateAliases(tableResolver);
+            if (joinClauses.isEmpty())
+            {
+                return prepareRegularSelect(forView);
+            }
+            else
+            {
+                return prepareJoinSelect(tableResolver);
+            }
+        }
+
+        public int getBindVariablesSize()
+        {
+            return bindVariables.getBindVariables().size();
+        }
+
+        private SelectStatement prepareJoinSelect(TableResolver tableResolver)
+        {
+
             validateJoins(tableResolver);
+            QueryPlanner queryPlanner = new QueryPlanner(this);
+            QueryPlanner.QueryPlan queryPlan = queryPlanner.prepare();
+            return null;
+        }
+
+        private SelectStatement prepareRegularSelect(boolean forView)
+        {
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
             List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
@@ -1016,7 +1042,8 @@ public class SelectStatement implements CQLStatement
                                        aggregationSpec,
                                        orderingComparator,
                                        prepareLimit(bindVariables, limit, keyspace(), limitReceiver()),
-                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
+                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()),
+                                       Collections.emptyList());
         }
 
         private void validateJoins(TableResolver tableResolver)
@@ -1026,9 +1053,9 @@ public class SelectStatement implements CQLStatement
                 Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> first = join.getJoinColumns().get(0);
                 for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> joinColumn : join.getJoinColumns())
                 {
-                    checkNotNull(tableResolver.resolveTable(joinColumn.left().getTableAlias()),
+                    checkNotNull(tableResolver.resolveTableMetadata(joinColumn.left().getTableAlias()),
                                  "Undefined table alias %s in %s", joinColumn.left().getTableAlias(), join);
-                    checkNotNull(tableResolver.resolveTable(joinColumn.right().getTableAlias()),
+                    checkNotNull(tableResolver.resolveTableMetadata(joinColumn.right().getTableAlias()),
                                  "Undefined table alias %s in %s", joinColumn.right().getTableAlias(), join);
                     checkNotNull(tableResolver.resolveColumn(joinColumn.left()),
                                  "Undefined column %s in %s", joinColumn.left(), join);

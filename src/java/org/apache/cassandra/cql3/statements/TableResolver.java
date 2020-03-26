@@ -18,14 +18,13 @@
 
 package org.apache.cassandra.cql3.statements;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
-import org.apache.cassandra.cql3.selection.Join;
+import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
@@ -36,48 +35,64 @@ import org.apache.cassandra.schema.TableMetadata;
  */
 public class TableResolver
 {
-    private final TableMetadata primary;
-    private Map<ColumnIdentifier, TableMetadata> tables;
+    private Map<ColumnIdentifier, QualifiedName> tables;
+    private Schema schema = Schema.instance;
 
-    public static TableResolver ofPrimary(QualifiedName primary)
+    public TableResolver(QualifiedName primary, List<Join.Raw> joinClauses)
     {
-        return new TableResolver(Schema.instance, primary, Collections.emptyList());
-    }
 
-    public TableResolver(Schema schema, QualifiedName primary, List<Join.Raw> joinClauses)
-    {
         this.tables = new HashMap<>(joinClauses.size() + 1);
-        this.primary = schema.validateTable(primary.getKeyspace(), primary.getName());
-        tables.put(primary.getAlias(), this.primary);
+        tables.put(primary.getAlias(), primary);
         for (Join.Raw join : joinClauses)
         {
             QualifiedName joinTable = join.getTable();
-            TableMetadata previous = tables.put(joinTable.getAlias(), schema.validateTable(joinTable.getKeyspace(), joinTable.getName()));
+            QualifiedName previous = tables.put(joinTable.getAlias(), joinTable);
             if (previous != null)
             {
                 throw new InvalidRequestException(
                 String.format("Cannot alias table %s as %s. The same alias has previously been used for %s",
                               joinTable.getName(),
                               joinTable.getAlias(),
-                              previous.name));
+                              previous.getName()));
             }
         }
     }
 
-    public TableMetadata resolveTable(ColumnIdentifier alias)
+    public QualifiedName resolveTable(ColumnIdentifier alias)
     {
         return tables.get(alias);
     }
 
-    public ColumnMetadata resolveColumn(ColumnMetadata.Raw column)
+    public TableMetadata resolveTableMetadata(ColumnIdentifier alias)
     {
-        TableMetadata tableMetadata = tables.get(column.getTableAlias());
-        return tables.get(column.getTableAlias()).getColumn(column.getIdentifier(tableMetadata));
+        QualifiedName qualifiedName = tables.get(alias);
+        if(qualifiedName == null) {
+            return null;
+        }
+        return schema.getTableMetadata(qualifiedName.getKeyspace(), qualifiedName.getName());
     }
 
-    public TableMetadata getPrimary()
+    public ColumnMetadata resolveColumn(ColumnMetadata.Raw left)
     {
-        return primary;
+        TableMetadata tableMetadata = resolveTableMetadata(left.getTableAlias());
+        return tableMetadata.getColumn(left.getIdentifier(tableMetadata));
     }
 
+    public ColumnMetadata resolveColumn(Selectable.RawIdentifier selectable)
+    {
+        return resolveTableMetadata(selectable.getTableAlias()).getColumn(selectable.toFieldIdentifier().bytes);
+    }
+
+    public ColumnMetadata resolveColumn(Selectable.Raw selectable)
+    {
+        if(selectable instanceof ColumnMetadata.Raw.Literal)
+        {
+            return resolveColumn((ColumnMetadata.Raw.Literal) selectable);
+        }
+        if(selectable instanceof Selectable.RawIdentifier)
+        {
+            return resolveColumn((Selectable.RawIdentifier) selectable);
+        }
+        throw new UnsupportedOperationException("Cannot resolve selectable of type " + selectable.getClass());
+    }
 }
