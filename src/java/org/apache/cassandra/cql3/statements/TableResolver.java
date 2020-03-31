@@ -26,6 +26,8 @@ import java.util.Map;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.selection.Join;
+import org.apache.cassandra.cql3.selection.RawSelector;
+import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
@@ -48,11 +50,12 @@ public class TableResolver
     {
         this.tables = new HashMap<>(joinClauses.size() + 1);
         this.primary = schema.validateTable(primary.getKeyspace(), primary.getName());
+
         tables.put(primary.getAlias(), this.primary);
         for (Join.Raw join : joinClauses)
         {
             QualifiedName joinTable = join.getTable();
-            TableMetadata previous = tables.put(joinTable.getAlias(), schema.validateTable(joinTable.getKeyspace(), joinTable.getName()));
+            TableMetadata previous = tables.put(joinTable.getAlias(), schema.validateTable(primary.getKeyspace(), joinTable.getName()));
             if (previous != null)
             {
                 throw new InvalidRequestException(
@@ -80,4 +83,8 @@ public class TableResolver
         return primary;
     }
 
+    public ColumnMetadata resolveColumn(Selectable.RawIdentifier column)
+    {
+        return tables.get(column.getAlias()).getColumn(column.toFieldIdentifier().bytes);
+    }
 }

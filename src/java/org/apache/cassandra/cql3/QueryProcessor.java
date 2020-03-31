@@ -288,6 +288,10 @@ public class QueryProcessor implements QueryHandler
                 AbstractType type = columnSpecification.type;
                 boundValues.add(value instanceof ByteBuffer || value == null ? (ByteBuffer) value : type.decompose(value));
             }
+            else
+            {
+                boundValues.add(null);
+            }
         }
         return QueryOptions.forInternalCalls(cl, boundValues);
     }

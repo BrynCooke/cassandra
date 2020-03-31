@@ -18,12 +18,18 @@
 
 package org.apache.cassandra.cql3.selection;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import com.google.common.base.Preconditions;
+
+import com.carrotsearch.hppc.IntArrayList;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.MultiColumnRelation;
@@ -53,12 +59,18 @@ public final class Join
     }
 
     private final Type type;
+    private QualifiedName table;
     private SelectStatement select;
+    private int[] joinParameterIdx;
+    private List<ByteBuffer> emptyResult;
 
-    public Join(Type type, SelectStatement select)
+    public Join(Type type,  QualifiedName table, int[] joinParameterIdx, SelectStatement select)
     {
         this.type = type;
+        this.table = table;
+        this.joinParameterIdx = joinParameterIdx;
         this.select = select;
+        emptyResult = Collections.nCopies(select.getSelection().getColumns().size(), null);
     }
 
     public Type getType()
@@ -69,6 +81,21 @@ public final class Join
     public SelectStatement getSelect()
     {
         return select;
+    }
+
+    public QualifiedName getTable()
+    {
+        return table;
+    }
+
+    public int[] getJoinParameterIdx()
+    {
+        return joinParameterIdx;
+    }
+
+    public List<ByteBuffer> getEmptyResult()
+    {
+        return emptyResult;
     }
 
     public static final class Raw
@@ -108,29 +135,60 @@ public final class Join
                                                                                .collect(Collectors.joining(" AND "));
         }
 
-        public Join prepare(TableResolver tableResolver, RawStatement raw)
+        public Join prepare(TableResolver tableResolver, RawStatement raw, List<Join.Raw> unpreparedJoins, List<Join> preparedJoins)
         {
-            RawStatement joinStatement = getJoinStatement(tableResolver, raw);
+            RawStatement joinStatement = getStatement(tableResolver, raw, unpreparedJoins);
+
             try
             {
-                return new Join(type, joinStatement.prepare(false));
+                int[] joinParameterIndexes = getJoinParameterIndexes(tableResolver, preparedJoins);
+
+                return new Join(type, table, joinParameterIndexes, joinStatement.prepareRegularSelect(false));
             }
             catch (InvalidRequestException e) {
                 throw new InvalidRequestException(String.format("Cannot %s. %s", this, e.getMessage()));
             }
         }
 
-        private RawStatement getJoinStatement(TableResolver tableResolver, RawStatement raw)
+        private int[] getJoinParameterIndexes(TableResolver tableResolver, List<Join> preparedJoins)
         {
-            List<RawSelector> selectors = raw.selectClause.stream().filter(selector -> {
-                if (selector.selectable instanceof Selectable.RawIdentifier)
+            IntArrayList params = new IntArrayList();
+            if (type != Type.Primary)
+            {
+                for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns : joinColumns)
                 {
-                    ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getAlias();
-                    return selectableAlias.equals(table.getAlias());
+                    ColumnMetadata.Raw foreignJoinColumn = getForeigenJoinColumn(columns);
+                    int index = getIndex(tableResolver, preparedJoins, foreignJoinColumn);
+                    params.add(index);
                 }
-                return false;
-            }).collect(Collectors.toList());
+            }
+            return params.toArray();
+        }
 
+        public static int getIndex(TableResolver tableResolver, List<Join> preparedJoins, ColumnMetadata.Raw column)
+        {
+            int index = 0;
+            ColumnMetadata resolved = tableResolver.resolveColumn(column);
+            for (Join join : preparedJoins)
+            {
+                if(Objects.equals(join.table.getAlias(), column.getAlias())) {
+                    //Not the table with the join columns, we need to skip the data entirely.
+                    int i = join.select.getSelection().getColumns().indexOf(resolved);
+                    Preconditions.checkState(i != -1, "Failed to find selected column %s", column);
+                    index += i;
+                    break;
+                }
+                else {
+                    //Not the table with the join columns, we need to skip the data entirely.
+                    index += join.select.getSelection().getColumns().size();
+                }
+            }
+            return index;
+        }
+
+        private RawStatement getStatement(TableResolver tableResolver, RawStatement raw, List<Join.Raw> unpreparedJoins)
+        {
+            List<RawSelector> selectors = getSelectors(raw, unpreparedJoins);
             WhereClause.Builder where = new WhereClause.Builder();
             raw.whereClause.expressions.forEach(where::add);
             for (Relation relation : raw.whereClause.relations)
@@ -153,10 +211,9 @@ public final class Join
                     }
                 }
             }
-
             int bindingsCount = raw.getBindVariablesSize();
-            //Unless we're doing a right join then we need the information from the left had side of the join.
-            if (type == Type.Left || type == Type.Inner)
+            //We need the information from the left had side of the join to do the actual join.
+            if (type != Type.Primary)
             {
                 for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns : joinColumns)
                 {
@@ -164,8 +221,7 @@ public final class Join
                     where.add(new SingleColumnRelation(joinColumn, Operator.EQ, new AbstractMarker.Raw(bindingsCount++)));
                 }
             }
-
-            RawStatement rawStatement = new RawStatement(table,
+            RawStatement rawStatement = new RawStatement(new QualifiedName(tableResolver.getPrimary().keyspace, table.getName()),
                                                          raw.parameters,
                                                          selectors,
                                                          Collections.emptyList(),
@@ -180,12 +236,43 @@ public final class Join
             return rawStatement;
         }
 
+        private List<RawSelector> getSelectors(RawStatement raw, List<Join.Raw> unpreparedJoins)
+        {
+            //We need not only the items in the select clause, but also any join clause forign keys
+            HashSet<String> selectors = new LinkedHashSet<>();
+            raw.selectClause.stream().filter(selector -> {
+                if (selector.selectable instanceof Selectable.RawIdentifier)
+                {
+                    ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getAlias();
+                    if(Objects.equals(selectableAlias, table.getAlias())) {
+                        return true;
+                    };
+                }
+                return false;
+            }).map(s->((Selectable.RawIdentifier) s.selectable).toFieldIdentifier().toString()).forEach(selectors::add);
+
+            unpreparedJoins.stream()
+                           .flatMap(j->j.getJoinColumns().stream().map(jc->j.getForeigenJoinColumn(jc)))
+                           .filter(jc->Objects.equals(jc.getAlias(), table.getAlias()))
+                            .forEach(jc->selectors.add(jc.rawText()));
+
+            return selectors.stream().map(s->new RawSelector(ColumnMetadata.Raw.forUnquoted(s), null)).collect(Collectors.toList());
+        }
+
         private ColumnMetadata.Raw getJoinColumn(Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns)
         {
             if(Objects.equals(columns.left().getAlias(), table.getAlias())) {
                 return columns.left();
             }
             return columns.right();
+        }
+
+        private ColumnMetadata.Raw getForeigenJoinColumn(Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns)
+        {
+            if(Objects.equals(columns.left().getAlias(), table.getAlias())) {
+                return columns.right();
+            }
+            return columns.left();
         }
     }
 }

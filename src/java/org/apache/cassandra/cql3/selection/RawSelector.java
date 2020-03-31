@@ -19,6 +19,7 @@
 package org.apache.cassandra.cql3.selection;
 
 import java.util.List;
+import java.util.Objects;
 
 import com.google.common.collect.Lists;
 
@@ -52,5 +53,19 @@ public class RawSelector
     {
         Selectable s = selectable.prepare(table);
         return alias != null ? new AliasedSelectable(s, alias) : s;
+    }
+
+    public boolean equals(Object o)
+    {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        RawSelector that = (RawSelector) o;
+        return Objects.equals(selectable, that.selectable) &&
+               Objects.equals(alias, that.alias);
+    }
+
+    public int hashCode()
+    {
+        return Objects.hash(selectable, alias);
     }
 }

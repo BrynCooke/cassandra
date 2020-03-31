@@ -18,11 +18,13 @@
 package org.apache.cassandra.cql3.validation.operations;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.Test;
 import org.junit.Assert;
 
+import com.googlecode.concurrenttrees.common.Iterables;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.Duration;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -3190,71 +3192,82 @@ public class SelectTest extends CQLTester
     @Test
     public void testJoins() throws Throwable
     {
-        String t1 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
-        String t2 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
-        String t3 = createTable("CREATE TABLE %s (k1 int, v1 int, v2 int, PRIMARY KEY (k1, v1))");
+        String t1 = createTable("CREATE TABLE %s (k int, c int, v int, PRIMARY KEY (k, c))");
+        String t2 = createTable("CREATE TABLE %s (k int, c int, v int, PRIMARY KEY (k, c))");
+        String t3 = createTable("CREATE TABLE %s (k int, c int, v int, PRIMARY KEY (k, c))");
+        execute(String.format("INSERT INTO %s.%s (k, c, v) VALUES (1, 2, 3)", keyspace(), t1));
+        execute(String.format("INSERT INTO %s.%s (k, c, v) VALUES (3, 4, 5)", keyspace(), t2));
+        execute(String.format("INSERT INTO %s.%s (k, c, v) VALUES (3, 5, 6)", keyspace(), t2));
 
-        execute(String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
-                              "INNER JOIN %s.%s AS t2 ON t1.v2 = t2.k1 AND t1.v1 = t2.v1 " +
-                              "INNER JOIN %s.%s AS t3 ON t2.v2 = t3.k1 " +
-                              "WHERE t1.k1 = ? AND t3.v1 = ?",
+//        assertRows(execute(String.format("SELECT t1.k, t2.k AS \"pk\", t2.v FROM %s.%s AS t1 " +
+//                                         "INNER JOIN %s.%s AS t2 ON t1.v = t2.k",
+//                                         keyspace(), t1,
+//                                         keyspace(), t2)),
+//                   row(1, 3, 5),
+//                   row(1, 3, 6));
+
+
+        execute(String.format("SELECT t1.k, t2.k, t3.k FROM %s.%s AS t1 " +
+                              "INNER JOIN %s.%s AS t2 ON t1.v = t2.k AND t1.c = t2.c " +
+                              "INNER JOIN %s.%s AS t3 ON t2.v = t3.k " +
+                              "WHERE t1.k = ? AND t3.c = ?",
                               keyspace(), t1,
                               keyspace(), t2,
-                              keyspace(), t3), 5, 2);
+                              keyspace(), t3), 1, 2);
 
-        execute(String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
-                              "LEFT JOIN %s.%s AS t2 ON t1.v2 = t2.k1 AND t1.v1 = t2.v1 " +
-                              "RIGHT JOIN %s.%s AS t3 ON t2.v2 = t3.k1 " +
-                              "WHERE t1.k1 = ? AND t3.v1 = ? AND t3.k1 = ?",
+        execute(String.format("SELECT t1.k, t2.k, t3.k FROM %s.%s AS t1 " +
+                              "LEFT JOIN %s.%s AS t2 ON t1.v = t2.k AND t1.c = t2.c " +
+                              "RIGHT JOIN %s.%s AS t3 ON t2.v = t3.k " +
+                              "WHERE t1.k = ? AND t3.c = ? AND t3.k = ?",
                               keyspace(), t1,
                               keyspace(), t2,
                               keyspace(), t3), 5, 2, 6);
 
-        assertInvalidMessage(String.format("Undefined column t3.v7 in INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v7", keyspace(), t3),
-                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 " +
-                                           "INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v7",
+        assertInvalidMessage(String.format("Undefined column t3.v7 in INNER JOIN %s.%s AS t3 ON t2.k = t3.v7", keyspace(), t3),
+                             String.format("SELECT t1.k, t2.k, t3.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.k = t2.v " +
+                                           "INNER JOIN %s.%s AS t3 ON t2.k = t3.v7",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3));
 
-        assertInvalidMessage(String.format("Undefined table alias t7 in INNER JOIN %s.%s AS t3 ON t2.k1 = t7.v2", keyspace(), t3),
-                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 " +
-                                           "INNER JOIN %s.%s AS t3 ON t2.k1 = t7.v2",
+        assertInvalidMessage(String.format("Undefined table alias t7 in INNER JOIN %s.%s AS t3 ON t2.k = t7.v", keyspace(), t3),
+                             String.format("SELECT t1.k, t2.k, t3.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.k = t2.v " +
+                                           "INNER JOIN %s.%s AS t3 ON t2.k = t7.v",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3));
 
-        assertInvalidMessage(String.format("Two tables must be referenced in INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 AND t1.k1 = t3.v2", keyspace(), t2),
-                             String.format("SELECT t1.k1, t2.k1, t3.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.k1 = t2.v2 AND t1.k1 = t3.v2 " +
-                                           "INNER JOIN %s.%s AS t3 ON t2.k1 = t3.v2",
+        assertInvalidMessage(String.format("Two tables must be referenced in INNER JOIN %s.%s AS t2 ON t1.k = t2.v AND t1.k = t3.v", keyspace(), t2),
+                             String.format("SELECT t1.k, t2.k, t3.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.k = t2.v AND t1.k = t3.v " +
+                                           "INNER JOIN %s.%s AS t3 ON t2.k = t3.v",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3));
 
 
-        assertInvalidMessage("Undefined table alias t4 in condition t4.k1 = ?",
-                             String.format("SELECT t1.k1, t2.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.v2 = t2.k1 " +
-                                           "WHERE t4.k1 = ?",
+        assertInvalidMessage("Undefined table alias t4 in condition t4.k = ?",
+                             String.format("SELECT t1.k, t2.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.v = t2.k " +
+                                           "WHERE t4.k = ?",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3), 5, 2);
 
-        assertInvalidMessage("Undefined table alias t4 in condition (t4.k1) IN ?",
-                             String.format("SELECT t1.k1, t2.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.v2 = t2.k1 " +
-                                           "WHERE (t4.k1) IN ?",
+        assertInvalidMessage("Undefined table alias t4 in condition (t4.k) IN ?",
+                             String.format("SELECT t1.k, t2.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.v = t2.k " +
+                                           "WHERE (t4.k) IN ?",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3), 5, 2);
 
-        assertInvalidMessage("More than one table was aliased in condition (t1.v1, t2.v2) IN ((2, 3), (3, 4))",
-                             String.format("SELECT t1.k1, t2.k1 FROM %s.%s AS t1 " +
-                                           "INNER JOIN %s.%s AS t2 ON t1.v2 = t2.k1 " +
-                                           "WHERE t1.k1 = ? AND (t1.v1, t2.v2) IN ((2, 3), (3, 4))",
+        assertInvalidMessage("More than one table was aliased in condition (t1.c, t2.v) IN ((2, 3), (3, 4))",
+                             String.format("SELECT t1.k, t2.k FROM %s.%s AS t1 " +
+                                           "INNER JOIN %s.%s AS t2 ON t1.v = t2.k " +
+                                           "WHERE t1.k = ? AND (t1.c, t2.v) IN ((2, 3), (3, 4))",
                                            keyspace(), t1,
                                            keyspace(), t2,
                                            keyspace(), t3), 5, 2);

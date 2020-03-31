@@ -23,10 +23,13 @@ import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.carrotsearch.hppc.IntArrayList;
+import com.carrotsearch.hppc.cursors.IntCursor;
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.Permission;
@@ -70,6 +73,7 @@ import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
+import reactor.core.publisher.Flux;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -101,6 +105,9 @@ public class SelectStatement implements CQLStatement
     private final Selection selection;
     private final Term limit;
     private final Term perPartitionLimit;
+    private final List<Join> joins;
+    private final ResultSet.ResultMetadata joinResultMetadata;
+    private java.util.function.Function<? super List<ByteBuffer>, ? extends List<ByteBuffer>> joinMapping;
 
     private final StatementRestrictions restrictions;
 
@@ -123,7 +130,8 @@ public class SelectStatement implements CQLStatement
                                                                        false,
                                                                        false);
 
-    public SelectStatement(TableMetadata table,
+
+    private SelectStatement(TableMetadata table,
                            VariableSpecifications bindVariables,
                            Parameters parameters,
                            Selection selection,
@@ -133,7 +141,9 @@ public class SelectStatement implements CQLStatement
                            Comparator<List<ByteBuffer>> orderingComparator,
                            Term limit,
                            Term perPartitionLimit,
-                           List<Join> joins)
+                           List<Join> joins,
+                           ResultSet.ResultMetadata joinResultMetadata,
+                           java.util.function.Function<? super List<ByteBuffer>, ? extends List<ByteBuffer>> joinMapping)
     {
         this.table = table;
         this.bindVariables = bindVariables;
@@ -145,6 +155,54 @@ public class SelectStatement implements CQLStatement
         this.parameters = parameters;
         this.limit = limit;
         this.perPartitionLimit = perPartitionLimit;
+        this.joins = joins;
+        this.joinResultMetadata = joinResultMetadata;
+        this.joinMapping = joinMapping;
+    }
+
+    public SelectStatement(TableMetadata table,
+                           VariableSpecifications bindVariables,
+                           Parameters parameters,
+                           Selection selection,
+                           StatementRestrictions restrictions,
+                           boolean isReversed,
+                           AggregationSpecification aggregationSpec,
+                           Comparator<List<ByteBuffer>> orderingComparator,
+                           Term limit,
+                           Term perPartitionLimit)
+    {
+        this(table,
+             bindVariables,
+             parameters,
+             selection,
+             restrictions,
+             isReversed,
+             aggregationSpec,
+             orderingComparator,
+             limit,
+             perPartitionLimit,
+             Collections.emptyList(),
+             null,
+             null);
+    }
+
+
+    private SelectStatement join(List<Join> joins,
+                                 ResultSet.ResultMetadata resultMetadata,
+                                 java.util.function.Function<? super List<ByteBuffer>, ? extends List<ByteBuffer>> joinMapping) {
+        return new SelectStatement(table,
+                                   bindVariables,
+                                   parameters,
+                                   selection,
+                                   restrictions,
+                                   isReversed,
+                                   aggregationSpec,
+                                   orderingComparator,
+                                   limit,
+                                   perPartitionLimit,
+                                   joins,
+                                   resultMetadata,
+                                   joinMapping);
     }
 
     @Override
@@ -202,8 +260,7 @@ public class SelectStatement implements CQLStatement
                                    null,
                                    null,
                                    null,
-                                   null,
-                                   Collections.emptyList());
+                                   null);
     }
 
     public ResultSet.ResultMetadata getResultMetadata()
@@ -235,6 +292,18 @@ public class SelectStatement implements CQLStatement
 
     public ResultMessage.Rows execute(QueryState state, QueryOptions options, long queryStartNanoTime)
     {
+        if (joins.isEmpty())
+        {
+            return executeRegular(state, options, queryStartNanoTime);
+        }
+        else
+        {
+            return executeJoinQuery(state, options, queryStartNanoTime, false);
+        }
+    }
+
+    private ResultMessage.Rows executeRegular(QueryState state, QueryOptions options, long queryStartNanoTime)
+    {
         ConsistencyLevel cl = options.getConsistency();
         checkNotNull(cl, "Invalid empty consistency level");
 
@@ -261,6 +330,125 @@ public class SelectStatement implements CQLStatement
                        userLimit,
                        queryStartNanoTime);
     }
+
+    private Flux<ResultMessage.Rows> executeRegularAsync(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        if (internal)
+        {
+            return Flux.just(executeRegularInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime));
+        }
+        else
+        {
+            return Flux.just(executeRegular(state, options, queryStartNanoTime));
+        }
+    }
+
+    public Flux<ResultMessage.Rows> executeAsync(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        if (internal)
+        {
+            return Flux.just(executeInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime));
+        }
+        else
+        {
+            return Flux.just(execute(state, options, queryStartNanoTime));
+        }
+    }
+    public static class LeftResult<E> extends ArrayList<E> {
+
+        public LeftResult(int size)
+        {
+            super(size);
+        }
+    }
+
+    private ResultMessage.Rows executeJoinQuery(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        Flux<List<ByteBuffer>> result = executeRegularAsync(state, options, queryStartNanoTime, internal)
+                                        .transform(f->expandAndFlatten(state, options, queryStartNanoTime, internal, f));
+        for (Join join : joins)
+        {
+            result = result.flatMap(left -> {
+                if(left instanceof LeftResult) {
+                    LeftResult<ByteBuffer> joined = new LeftResult<>(left.size() + join.getEmptyResult().size());
+                    joined.addAll(left);
+                    joined.addAll(join.getEmptyResult());
+                    return Flux.just(joined);
+                }
+                ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinParameterIdx().length);
+                for(int parameterIdx : join.getJoinParameterIdx()) {
+                    params.add(left.get(parameterIdx));
+                }
+                QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
+                return join.getSelect()
+                           .executeAsync(state, joinOptions, queryStartNanoTime, internal)
+                           .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
+                           .transform(f -> {
+                               switch (join.getType())
+                               {
+                                   case Left:
+                                       //Left joins return an empty result if there is nothing
+                                       return f.defaultIfEmpty(join.getEmptyResult());
+                                   case Right:
+                                       throw new IllegalStateException("Right join should have been converted to left");
+                                   case Inner:
+                                       //Inner don't default if empty and are therefore filtered.
+                                       return f;
+                                   default:
+                                       throw new IllegalStateException("Unknown join type " + join.getType());
+                               }
+                           })
+                           .map(right -> {
+                               ArrayList<ByteBuffer> merge;
+                               if(right == join.getEmptyResult())
+                               {
+                                   merge = new LeftResult<>(left.size() + right.size());
+                               }
+                               else
+                               {
+                                   merge = new ArrayList<>(left.size() + right.size());
+                               }
+                               merge.addAll(left);
+                               merge.addAll(right);
+                               return merge;
+                           });
+            });
+        }
+
+        result = result.map(joinMapping);
+        List<List<ByteBuffer>> block = result.collect(Collectors.toList()).block();
+        return new ResultMessage.Rows(new ResultSet(joinResultMetadata, block));
+    }
+
+    private Flux<List<ByteBuffer>> expandAndFlatten(QueryState state,
+                                                    QueryOptions options,
+                                                    long queryStartNanoTime,
+                                                    boolean internal,
+                                                    Flux<ResultMessage.Rows> flux) {
+        return flux.expand(r -> fetchNext(state, options, queryStartNanoTime, internal, r))
+            .flatMap(r -> Flux.fromIterable(r.result.rows));
+    }
+
+    private Flux<ResultMessage.Rows> fetchNext(QueryState state,
+                                               QueryOptions options,
+                                               long queryStartNanoTime,
+                                               boolean internal,
+                                               ResultMessage.Rows result)
+    {
+        boolean morePages = result.result.metadata.getFlags().contains(ResultSet.Flag.HAS_MORE_PAGES);
+        if(morePages) {
+            QueryOptions queryOptions = QueryOptions.forJoinQuery(options,
+                                                                  result.result.metadata.getPagingState(),
+                                                                  Collections.emptyList());
+            return executeAsync(state,
+                                queryOptions,
+                                queryStartNanoTime,
+                                internal);
+        }
+        return Flux.empty();
+    }
+
+
 
     public ReadQuery getQuery(QueryOptions options, int nowInSec) throws RequestValidationException
     {
@@ -438,6 +626,17 @@ public class SelectStatement implements CQLStatement
     }
 
     public ResultMessage.Rows executeInternal(QueryState state, QueryOptions options, int nowInSec, long queryStartNanoTime) throws RequestExecutionException, RequestValidationException
+    {
+        if (joins.isEmpty())
+        {
+            return executeRegularInternal(state, options, nowInSec, queryStartNanoTime);
+        }
+        else {
+            return executeJoinQuery(state, options, queryStartNanoTime, true);
+        }
+    }
+
+    private ResultMessage.Rows executeRegularInternal(QueryState state, QueryOptions options, int nowInSec, long queryStartNanoTime)
     {
         int userLimit = getLimit(options);
         int userPerPartitionLimit = getPerPartitionLimit(options);
@@ -960,13 +1159,15 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
+            TableResolver tableResolver = new TableResolver(Schema.instance, qualifiedName, joinClauses);
+            validateAliases(tableResolver);
             if (joinClauses.isEmpty())
             {
                 return prepareRegularSelect(forView);
             }
             else
             {
-                return prepareJoinSelect();
+                return prepareJoinSelect(tableResolver);
             }
         }
 
@@ -975,23 +1176,96 @@ public class SelectStatement implements CQLStatement
             return bindVariables.getBindVariables().size();
         }
 
-        private SelectStatement prepareJoinSelect()
+        private SelectStatement prepareJoinSelect(TableResolver tableResolver)
         {
-            TableResolver tableResolver = new TableResolver(Schema.instance, qualifiedName, joinClauses);
-            validateAliases(tableResolver);
+
             validateJoins(tableResolver);
+            //We need to create a join for the primary select as this won't be included in our join list
+            Join.Raw primary = new Join.Raw(Join.Type.Primary, qualifiedName, Collections.emptyList());
+            List<Join.Raw> normalizedJoins = new ArrayList<>();
 
-            Join.Raw raw = new Join.Raw(Join.Type.Primary, qualifiedName, Collections.emptyList());
-            Join primary = raw.prepare(tableResolver, this);
+            //All right joins can be converted to left joins. This makes for significantly easier processing later.
+            for (Join.Raw join : joinClauses)
+            {
+                if(join.getType() == Join.Type.Right)
+                {
+                    normalizedJoins.add(0, new Join.Raw(Join.Type.Left, primary.getTable(), join.getJoinColumns()));
+                    primary = new Join.Raw(Join.Type.Primary, join.getTable(), Collections.emptyList());
+                }
+                else {
+                    normalizedJoins.add(join);
+                }
+            }
 
-            List<Join> joins = joinClauses.stream()
-                                          .map(join -> join.prepare(tableResolver, this))
-                                          .collect(Collectors.toList());
-            SelectStatement select = primary.getSelect();
-            return select;
+            normalizedJoins.add(0, primary);
+
+            List<Join> preparedJoins = new ArrayList<>();
+            for (Join.Raw join : normalizedJoins)
+            {
+                preparedJoins.add(join.prepare(tableResolver,this, normalizedJoins, preparedJoins));
+            }
+
+            IntArrayList joinMappings = new IntArrayList();
+            ResultSet.ResultMetadata metadata = new ResultSet.ResultMetadata(selectClause.stream().map(selector -> {
+                if (selector.selectable instanceof Selectable.RawIdentifier)
+                {
+                    Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) selector.selectable;
+                    joinMappings.add(getIndex(tableResolver, preparedJoins, selectable));
+                    ColumnMetadata column = tableResolver.resolveColumn(selectable);
+
+                    ColumnSpecification columnSpecification = new ColumnSpecification(column.ksName,
+                                                                                      column.cfName,
+                                                                                      column.name,
+                                                                                      column.type);
+                    if(selector.alias != null) {
+                        columnSpecification = columnSpecification.withAlias(selector.alias);
+                    }
+                    return columnSpecification;
+                }
+                throw new UnsupportedOperationException("Only regular columns may be used in joins");
+            }).collect(Collectors.toList()));
+
+            int[] mappings = joinMappings.toArray();
+            java.util.function.Function<? super List<ByteBuffer>, ? extends List<ByteBuffer>> joinMapping = new java.util.function.Function<List<ByteBuffer>, List<ByteBuffer>>()
+            {
+                public List<ByteBuffer> apply(List<ByteBuffer> byteBuffers)
+                {
+                    List<ByteBuffer> result = new ArrayList<>(mappings.length);
+                    for (int mapping : mappings)
+                    {
+                        result.add(byteBuffers.get(mapping));
+                    }
+                    return result;
+                }
+            };
+            //We return the primary query initialized with the rest of the joins
+            return preparedJoins.get(0).getSelect().join(preparedJoins.subList(1, preparedJoins.size()), metadata, joinMapping);
+
         }
 
-        private SelectStatement prepareRegularSelect(boolean forView)
+        public static int getIndex(TableResolver tableResolver, List<Join> preparedJoins, Selectable.RawIdentifier column)
+        {
+            int index = 0;
+            ColumnMetadata foreignColumn = tableResolver.resolveColumn(column);
+            for (Join join : preparedJoins)
+            {
+                if(Objects.equals(join.getTable().getAlias(), column.getAlias())) {
+                    //Not the table with the join columns, we need to skip the data entirely.
+                    int i = join.getSelect().getSelection().getColumns().indexOf(foreignColumn);
+                    Preconditions.checkState(i != -1, "Failed to find selected column %s", column);
+                    index += i;
+                    break;
+                }
+                else {
+                    //Not the table with the join columns, we need to skip the data entirely.
+                    index += join.getSelect().getSelection().getColumns().size();
+                }
+            }
+            return index;
+        }
+
+
+        public SelectStatement prepareRegularSelect(boolean forView)
         {
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
@@ -1050,8 +1324,7 @@ public class SelectStatement implements CQLStatement
                                        aggregationSpec,
                                        orderingComparator,
                                        prepareLimit(bindVariables, limit, keyspace(), limitReceiver()),
-                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()),
-                                       Collections.emptyList());
+                                       prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
         }
 
 
@@ -1086,7 +1359,7 @@ public class SelectStatement implements CQLStatement
                 {
                     ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getAlias();
                     checkNotNull(tableResolver.resolveTable(selectableAlias),
-                              "Undefined table alias %s for selection %s", selectableAlias, selector.selectable);
+                                 "Undefined table alias %s for selection %s", selectableAlias, selector.selectable);
                 }
             });
 
@@ -1096,7 +1369,7 @@ public class SelectStatement implements CQLStatement
                     SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
                     ColumnIdentifier alias = singleColumnRelation.getEntity().getAlias();
                     checkNotNull(tableResolver.resolveTable(alias),
-                              "Undefined table alias %s in condition %s", alias, relation);
+                                 "Undefined table alias %s in condition %s", alias, relation);
                 }
                 if (relation instanceof MultiColumnRelation)
                 {
@@ -1115,7 +1388,7 @@ public class SelectStatement implements CQLStatement
                                                     .map(ColumnMetadata.Raw.Literal::getAlias)
                                                     .distinct()
                                                     .count();
-                    checkTrue(count == 1,"More than one table was aliased in condition %s", relation);
+                    checkTrue(count == 1, "More than one table was aliased in condition %s", relation);
                 }
             });
         }
@@ -1363,7 +1636,9 @@ public class SelectStatement implements CQLStatement
             return isReversed;
         }
 
-        /** If ALLOW FILTERING was not specified, this verifies that it is not needed */
+        /**
+         * If ALLOW FILTERING was not specified, this verifies that it is not needed
+         */
         private void checkNeedsFiltering(StatementRestrictions restrictions) throws InvalidRequestException
         {
             // non-key-range non-indexed queries cannot involve filtering underneath

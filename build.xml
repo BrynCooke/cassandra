@@ -620,7 +620,7 @@
           <dependency groupId="org.gridkit.jvmtool" artifactId="sjk-json" version="0.14"/>
 
           <dependency groupId="com.beust" artifactId="jcommander" version="1.30"/>
-
+          <dependency groupId="io.projectreactor" artifactId="reactor-core" version="3.3.4.RELEASE"/>
         </dependencyManagement>
         <developer id="adelapena" name="Andres de la Peña"/>
         <developer id="alakshman" name="Avinash Lakshman"/>
