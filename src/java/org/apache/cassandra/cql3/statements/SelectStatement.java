@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.Permission;
+import org.apache.cassandra.cql3.selection.Join;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
@@ -67,6 +68,8 @@ import org.apache.cassandra.service.pager.QueryPager;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.Pair;
+
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
@@ -924,6 +927,7 @@ public class SelectStatement implements CQLStatement
     {
         public final Parameters parameters;
         public final List<RawSelector> selectClause;
+        private List<Join.Raw> joinClauses;
         public final WhereClause whereClause;
         public final Term.Raw limit;
         public final Term.Raw perPartitionLimit;
@@ -931,6 +935,7 @@ public class SelectStatement implements CQLStatement
         public RawStatement(QualifiedName cfName,
                             Parameters parameters,
                             List<RawSelector> selectClause,
+                            List<Join.Raw> joinClauses,
                             WhereClause whereClause,
                             Term.Raw limit,
                             Term.Raw perPartitionLimit)
@@ -938,6 +943,7 @@ public class SelectStatement implements CQLStatement
             super(cfName);
             this.parameters = parameters;
             this.selectClause = selectClause;
+            this.joinClauses = joinClauses;
             this.whereClause = whereClause;
             this.limit = limit;
             this.perPartitionLimit = perPartitionLimit;
@@ -950,7 +956,9 @@ public class SelectStatement implements CQLStatement
 
         public SelectStatement prepare(boolean forView) throws InvalidRequestException
         {
-            validateAliases();
+            TableResolver tableResolver = new TableResolver(Schema.instance, qualifiedName, joinClauses);
+            validateAliases(tableResolver);
+            validateJoins(tableResolver);
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
             List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
@@ -1011,15 +1019,37 @@ public class SelectStatement implements CQLStatement
                                        prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()));
         }
 
-        private void validateAliases()
+        private void validateJoins(TableResolver tableResolver)
         {
+            joinClauses.stream().forEach(join -> {
 
-            ColumnIdentifier alias = qualifiedName.getAlias();
+                Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> first = join.getJoinColumns().get(0);
+                for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> joinColumn : join.getJoinColumns())
+                {
+                    checkNotNull(tableResolver.resolveTable(joinColumn.left().getTableAlias()),
+                                 "Undefined table alias %s in %s", joinColumn.left().getTableAlias(), join);
+                    checkNotNull(tableResolver.resolveTable(joinColumn.right().getTableAlias()),
+                                 "Undefined table alias %s in %s", joinColumn.right().getTableAlias(), join);
+                    checkNotNull(tableResolver.resolveColumn(joinColumn.left()),
+                                 "Undefined column %s in %s", joinColumn.left(), join);
+                    checkNotNull(tableResolver.resolveColumn(joinColumn.right()),
+                                 "Undefined column %s in %s", joinColumn.right(), join);
+                    checkTrue(Objects.equals(joinColumn.left().getTableAlias(), first.left().getTableAlias()) &&
+                              Objects.equals(joinColumn.right().getTableAlias(), first.right().getTableAlias()) ||
+                              Objects.equals(joinColumn.left().getTableAlias(), first.right().getTableAlias()) &&
+                              Objects.equals(joinColumn.right().getTableAlias(), first.left().getTableAlias()),
+                              "Two tables must be referenced in %s", join);
+                }
+            });
+        }
+
+        private void validateAliases(TableResolver tableResolver)
+        {
             selectClause.stream().forEach(selector -> {
                 if (selector.selectable instanceof Selectable.RawIdentifier)
                 {
                     ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getTableAlias();
-                    checkTrue(Objects.equals(selectableAlias, alias),
+                    checkNotNull(tableResolver.resolveTable(selectableAlias),
                               "Undefined table alias %s for selection %s", defaultAlias(selectableAlias), selector.selectable);
                 }
             });
@@ -1028,9 +1058,9 @@ public class SelectStatement implements CQLStatement
                 if (relation instanceof SingleColumnRelation)
                 {
                     SingleColumnRelation singleColumnRelation = (SingleColumnRelation) relation;
-                    ColumnMetadata.Raw.Literal entity = (ColumnMetadata.Raw.Literal) singleColumnRelation.getEntity();
-                    checkTrue(Objects.equals(entity.getTableAlias(), alias),
-                              "Undefined table alias %s for relation %s", defaultAlias(entity.getTableAlias()), relation);
+                    ColumnIdentifier alias = singleColumnRelation.getEntity().getTableAlias();
+                    checkNotNull(tableResolver.resolveTable(alias),
+                              "Undefined table alias %s for relation %s", defaultAlias(alias), relation);
                 }
                 if (relation instanceof MultiColumnRelation)
                 {
@@ -1039,8 +1069,9 @@ public class SelectStatement implements CQLStatement
                                        .stream()
                                        .map(ColumnMetadata.Raw.Literal.class::cast)
                                        .forEach(entity -> {
-                                           checkTrue(Objects.equals(entity.getTableAlias(), alias),
-                                                     "Undefined table alias %s for relation %s", defaultAlias(entity.getTableAlias()), relation);
+                                           ColumnIdentifier alias = entity.getTableAlias();
+                                           checkNotNull(tableResolver.resolveTable(alias),
+                                                        "Undefined table alias %s in relation %s", defaultAlias(alias), relation);
                                        });
                     long count = multiColumnRelation.getEntities()
                                                     .stream()
@@ -1048,7 +1079,7 @@ public class SelectStatement implements CQLStatement
                                                     .map(ColumnMetadata.Raw.Literal::getTableAlias)
                                                     .distinct()
                                                     .count();
-                    checkTrue(count == 1, "More than one table was aliased in condition %s", relation);
+                    checkTrue(count == 1, "More than one table was aliased in relation %s", relation);
                 }
             });
         }
