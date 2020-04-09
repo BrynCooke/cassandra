@@ -28,6 +28,7 @@ import com.google.common.collect.Lists;
 
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.statements.QueryPlanner;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -72,6 +73,18 @@ public abstract class Selection
         this.metadata.addNonSerializedColumns(orderingColumns);
 
         this.orderingColumns = orderingColumns.isEmpty() ? Collections.emptyList() : new ArrayList<>(orderingColumns);
+    }
+
+    public static Selection forQueryPlan(QueryPlanner.QueryPlan queryPlan)
+    {
+        //TODO HACK alert. This needs to be rewritten so actually build a selection properly.
+        //This will make non literal columns work correctly
+        return new SimpleSelection(queryPlan.getJoins().get(0).getSelect().table, Collections.emptyList(), Collections.emptySet(), false) {
+            public ResultSet.ResultMetadata getResultMetadata()
+            {
+                return queryPlan.getMetadata();
+            }
+        };
     }
 
     /**

@@ -46,6 +46,11 @@ public class TableResolver
         for (Join.Raw join : joinClauses)
         {
             QualifiedName joinTable = join.getTable();
+            if(joinTable.getKeyspace() == null)
+            {
+                joinTable.setKeyspace(primary.getKeyspace(), false);
+            }
+            schema.validateTable(joinTable.getKeyspace(), joinTable.getName());
             QualifiedName previous = tables.put(joinTable.getAlias(), joinTable);
             if (previous != null)
             {
@@ -72,10 +77,23 @@ public class TableResolver
         return schema.getTableMetadata(qualifiedName.getKeyspace(), qualifiedName.getName());
     }
 
-    public ColumnMetadata resolveColumn(ColumnMetadata.Raw left)
+    public ColumnIdentifier getAlias(Selectable.Raw selectable)
     {
-        TableMetadata tableMetadata = resolveTableMetadata(left.getTableAlias());
-        return tableMetadata.getColumn(left.getIdentifier(tableMetadata));
+        if(selectable instanceof ColumnMetadata.Raw.Literal)
+        {
+            return ((ColumnMetadata.Raw.Literal) selectable).getTableAlias();
+        }
+        if(selectable instanceof Selectable.RawIdentifier)
+        {
+            return ((Selectable.RawIdentifier) selectable).getTableAlias();
+        }
+        return null;
+    }
+
+    public ColumnMetadata resolveColumn(ColumnMetadata.Raw selectable)
+    {
+        TableMetadata tableMetadata = resolveTableMetadata(selectable.getTableAlias());
+        return tableMetadata.getColumn(selectable.getIdentifier(tableMetadata));
     }
 
     public ColumnMetadata resolveColumn(Selectable.RawIdentifier selectable)

@@ -69,6 +69,22 @@ public abstract class QueryOptions
         return new DefaultQueryOptions(null, null, true, null, protocolVersion);
     }
 
+    public static QueryOptions forJoinQuery(QueryOptions options, PagingState state, List<ByteBuffer> values)
+    {
+        List<ByteBuffer> augmentedValues = new ArrayList<>(options.getValues().size() + values.size());
+        augmentedValues.addAll(options.getValues());
+        augmentedValues.addAll(values);
+        SpecificOptions specificOptions = options.getSpecificOptions();
+        SpecificOptions clonedOptions = new SpecificOptions(specificOptions.pageSize,
+                                                            state,
+                                                            specificOptions.serialConsistency,
+                                                            specificOptions.timestamp,
+                                                            specificOptions.keyspace,
+                                                            specificOptions.nowInSeconds);
+        return new DefaultQueryOptions(options.getConsistency(), augmentedValues, options.skipMetadata(), clonedOptions, options.getProtocolVersion());
+
+    }
+
     public static QueryOptions create(ConsistencyLevel consistency,
                                       List<ByteBuffer> values,
                                       boolean skipMetadata,

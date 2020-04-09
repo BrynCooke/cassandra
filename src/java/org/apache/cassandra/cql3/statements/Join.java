@@ -19,6 +19,7 @@
 package org.apache.cassandra.cql3.statements;
 
 import java.nio.ByteBuffer;
+import java.util.AbstractList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -28,8 +29,37 @@ import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.utils.Pair;
 
+import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
+import static org.apache.cassandra.cql3.statements.RequestValidations.checkTrue;
+
 public final class Join
 {
+    public static class JoinResult extends AbstractList<ByteBuffer>
+    {
+
+        private final List<ByteBuffer> left;
+        private final List<ByteBuffer> right;
+
+        public JoinResult(List<ByteBuffer> left, List<ByteBuffer> right)
+        {
+            this.left = left;
+            this.right = right;
+        }
+
+        public ByteBuffer get(int index)
+        {
+            if (index < left.size())
+            {
+                return left.get(index);
+            }
+            return right.get(index - left.size());
+        }
+
+        public int size()
+        {
+            return left.size() + right.size();
+        }
+    }
 
     public enum Type
     {
@@ -124,7 +154,8 @@ public final class Join
 
         public String toString()
         {
-            if(type == Type.Primary) {
+            if (type == Type.Primary)
+            {
                 return "SELECT " + table;
             }
             return type.toString()
@@ -135,7 +166,8 @@ public final class Join
 
         public ColumnMetadata.Raw getJoinColumn(Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns)
         {
-            if(Objects.equals(columns.left().getTableAlias(), table.getAlias())) {
+            if (Objects.equals(columns.left().getTableAlias(), table.getAlias()))
+            {
                 return columns.left();
             }
             return columns.right();
@@ -143,7 +175,8 @@ public final class Join
 
         public ColumnMetadata.Raw getForeigenJoinColumn(Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> columns)
         {
-            if(Objects.equals(columns.left().getTableAlias(), table.getAlias())) {
+            if (Objects.equals(columns.left().getTableAlias(), table.getAlias()))
+            {
                 return columns.right();
             }
             return columns.left();
@@ -157,6 +190,31 @@ public final class Join
         public Raw invert(Raw join, Type type)
         {
             return new Join.Raw(type, join.table, joinColumns);
+        }
+
+        public void validate(TableResolver tableResolver)
+        {
+
+            Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> first = getJoinColumns().get(0);
+            for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> joinColumn : getJoinColumns())
+            {
+                checkNotNull(tableResolver.resolveTableMetadata(joinColumn.left().getTableAlias()),
+                             "Undefined table alias %s in %s", joinColumn.left().getTableAlias(), this);
+                checkNotNull(tableResolver.resolveTableMetadata(joinColumn.right().getTableAlias()),
+                             "Undefined table alias %s in %s", joinColumn.right().getTableAlias(), this);
+                checkNotNull(tableResolver.resolveColumn(joinColumn.left()),
+                             "Undefined column %s in %s", joinColumn.left(), this);
+                checkNotNull(tableResolver.resolveColumn(joinColumn.right()),
+                             "Undefined column %s in %s", joinColumn.right(), this);
+                checkTrue(Objects.equals(joinColumn.left().getTableAlias(), first.left().getTableAlias()) &&
+                          Objects.equals(joinColumn.right().getTableAlias(), first.right().getTableAlias()) ||
+                          Objects.equals(joinColumn.left().getTableAlias(), first.right().getTableAlias()) &&
+                          Objects.equals(joinColumn.right().getTableAlias(), first.left().getTableAlias()),
+                          "Two tables must be referenced in %s", this);
+                checkTrue(Objects.equals(joinColumn.left().getTableAlias(), getTable().getAlias())
+                          || Objects.equals(joinColumn.right().getTableAlias(), getTable().getAlias()),
+                          "Join %s = %s must reference table %s in %s", joinColumn.left(), joinColumn.right(), getTable(), this);
+            }
         }
 
         public boolean equals(Object o)

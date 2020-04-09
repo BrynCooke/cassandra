@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.cql3.statements;
 
+import java.nio.ByteBuffer;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -29,6 +30,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -36,6 +38,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
 import org.apache.cassandra.cql3.AbstractMarker;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.MultiColumnRelation;
 import org.apache.cassandra.cql3.Operator;
@@ -64,15 +67,15 @@ public class QueryPlanner
     public static class QueryPlan
     {
         private List<Join> joins;
-        private ResultSet.ResultMetadata resultMetadata;
+        private ResultSet.ResultMetadata metadata;
         private int[] resultMapping;
         private List<Selectable.Raw> joinRow;
 
-        public QueryPlan(List<Selectable.Raw> joinRow, List<Join> joins, ResultSet.ResultMetadata resultMetadata, int[] resultMapping)
+        public QueryPlan(List<Selectable.Raw> joinRow, List<Join> joins, ResultSet.ResultMetadata metadata, int[] resultMapping)
         {
             this.joinRow = joinRow;
             this.joins = joins;
-            this.resultMetadata = resultMetadata;
+            this.metadata = metadata;
             this.resultMapping = resultMapping;
         }
 
@@ -86,14 +89,31 @@ public class QueryPlanner
             return Collections.unmodifiableList(joins);
         }
 
-        public int[] getResultMapping()
+        public int[] getResultMappingIndexes()
         {
             return resultMapping;
         }
 
-        public ResultSet.ResultMetadata getResultMetadata()
+        public Function<List<ByteBuffer>, List<ByteBuffer>> getResultMapping()
         {
-            return resultMetadata;
+            return source -> new AbstractList<ByteBuffer>()
+            {
+
+                public int size()
+                {
+                    return resultMapping.length;
+                }
+
+                public ByteBuffer get(int index)
+                {
+                    return source.get(resultMapping[index]);
+                }
+            };
+        }
+
+        public ResultSet.ResultMetadata getMetadata()
+        {
+            return metadata;
         }
     }
 
@@ -133,7 +153,7 @@ public class QueryPlanner
         }
 
         List<RawSelector> expandedSelectors = expandedSelectors();
-        ResultSet.ResultMetadata metadata = resultMetadata(expandedSelectors);
+        ResultSet.ResultMetadata metadata = resultMetaData(expandedSelectors);
         int[] resultMapping = resultMapping(expandedSelectors, joinRow);
 
         return new QueryPlan(joinRow, preparedJoins, metadata, resultMapping);
@@ -150,19 +170,26 @@ public class QueryPlanner
                 Preconditions.checkState(i != -1, "Failed to find column in result set.");
                 return i;
             }
+            if (selector.selectable instanceof ColumnMetadata.Raw.Literal)
+            {
+                ColumnMetadata.Raw.Literal selectable = (ColumnMetadata.Raw.Literal) selector.selectable;
+                ColumnMetadata column = tableResolver.resolveColumn(selectable);
+                int i = joinRow.indexOf(ColumnMetadata.Raw.Literal.forQuoted(column.name.toString(), selectable.getTableAlias()));
+                Preconditions.checkState(i != -1, "Failed to find column in result set.");
+                return i;
+            }
             throw new UnsupportedOperationException("Only regular columns may be used in joins");
         })
                                 .toArray();
     }
 
-    private ResultSet.ResultMetadata resultMetadata(List<RawSelector> expandedSelectors)
+    private ResultSet.ResultMetadata resultMetaData(List<RawSelector> expandedSelectors)
     {
         List<ColumnSpecification> columns;
         columns = expandedSelectors.stream()
                                    .map(selector -> {
-
-
                                        ColumnMetadata column = tableResolver.resolveColumn(selector.selectable);
+                                       ColumnIdentifier alias = tableResolver.getAlias(selector.selectable);
                                        ColumnSpecification columnSpecification = new ColumnSpecification(column.ksName,
                                                                                                          column.cfName,
                                                                                                          column.name,
@@ -171,9 +198,15 @@ public class QueryPlanner
                                        {
                                            columnSpecification = columnSpecification.withAlias(selector.alias);
                                        }
+                                       else if (alias != null)
+                                       {
+                                           columnSpecification = columnSpecification.withAlias(ColumnIdentifier.getInterned(alias.toString() + "." + column.name, true));
+                                       }
+
                                        return columnSpecification;
                                    })
                                    .collect(Collectors.toList());
+
         return new ResultSet.ResultMetadata(columns);
     }
 
@@ -187,7 +220,9 @@ public class QueryPlanner
                    {
                        Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) s.selectable;
                        TableMetadata tableMetadata = tableResolver.resolveTableMetadata(selectable.getTableAlias());
-                       return tableMetadata.columns().stream().map(c -> new RawSelector(Selectable.RawIdentifier.forQuoted(c.name.toString(), selectable.getTableAlias()), null));
+                       return Lists.newArrayList(tableMetadata.allColumnsInSelectOrder())
+                                   .stream()
+                                   .map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), null));
                    }
                    return Stream.of(s);
                })

@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
@@ -67,7 +68,7 @@ import org.apache.cassandra.service.pager.QueryPager;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.Pair;
+import reactor.core.publisher.Flux;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -120,6 +121,7 @@ public class SelectStatement implements CQLStatement
                                                                        false,
                                                                        false,
                                                                        false);
+    private QueryPlanner.QueryPlan queryPlan;
 
     public SelectStatement(TableMetadata table,
                            VariableSpecifications bindVariables,
@@ -131,7 +133,7 @@ public class SelectStatement implements CQLStatement
                            Comparator<List<ByteBuffer>> orderingComparator,
                            Term limit,
                            Term perPartitionLimit,
-                           List<Join> joins)
+                           QueryPlanner.QueryPlan queryPlan)
     {
         this.table = table;
         this.bindVariables = bindVariables;
@@ -143,6 +145,7 @@ public class SelectStatement implements CQLStatement
         this.parameters = parameters;
         this.limit = limit;
         this.perPartitionLimit = perPartitionLimit;
+        this.queryPlan = queryPlan;
     }
 
     @Override
@@ -201,7 +204,7 @@ public class SelectStatement implements CQLStatement
                                    null,
                                    null,
                                    null,
-                                   Collections.emptyList());
+                                   null);
     }
 
     public ResultSet.ResultMetadata getResultMetadata()
@@ -233,6 +236,18 @@ public class SelectStatement implements CQLStatement
 
     public ResultMessage.Rows execute(QueryState state, QueryOptions options, long queryStartNanoTime)
     {
+        if (queryPlan == null)
+        {
+            return executeRegular(state, options, queryStartNanoTime);
+        }
+        else
+        {
+            return executeJoinQuery(state, options, queryStartNanoTime, false);
+        }
+    }
+
+    private ResultMessage.Rows executeRegular(QueryState state, QueryOptions options, long queryStartNanoTime)
+    {
         ConsistencyLevel cl = options.getConsistency();
         checkNotNull(cl, "Invalid empty consistency level");
 
@@ -259,6 +274,113 @@ public class SelectStatement implements CQLStatement
                        userLimit,
                        queryStartNanoTime);
     }
+
+    private Flux<ResultMessage.Rows> executeRegularAsync(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        if (internal)
+        {
+            return Flux.just(executeRegularInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime));
+        }
+        else
+        {
+            return Flux.just(executeRegular(state, options, queryStartNanoTime));
+        }
+    }
+
+    public Flux<ResultMessage.Rows> executeAsync(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        if (internal)
+        {
+            return Flux.just(executeInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime));
+        }
+        else
+        {
+            return Flux.just(execute(state, options, queryStartNanoTime));
+        }
+    }
+
+    private ResultMessage.Rows executeJoinQuery(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal)
+    {
+        Flux<List<ByteBuffer>> result = null;
+        for (Join join : queryPlan.getJoins())
+        {
+            if (join.getType() == Join.Type.Primary)
+            {
+                result = join.getSelect().executeAsync(state, options, queryStartNanoTime, internal)
+                         .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f));
+            }
+            else
+            {
+                result = result.flatMap(left -> {
+                    ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
+                    for (int parameterIdx : join.getJoinMapping())
+                    {
+                        ByteBuffer parameter = left.get(parameterIdx);
+                        params.add(parameter);
+                        if(parameter == null) {
+                            //We must have had a left join that didn't match
+                            return Flux.just(new Join.JoinResult(left, join.getEmptyResult()));
+                        }
+                    }
+                    QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
+                    return join.getSelect()
+                               .executeAsync(state, joinOptions, queryStartNanoTime, internal)
+                               .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
+                               .transform(f -> {
+                                   switch (join.getType())
+                                   {
+                                       case Left:
+                                           //Left joins return an empty result if there is nothing
+                                           return f.defaultIfEmpty(join.getEmptyResult());
+                                       case Right:
+                                           throw new IllegalStateException("Right join should have been converted to left");
+                                       case Inner:
+                                           //Inner don't default if empty and are therefore filtered.
+                                           return f;
+                                       default:
+                                           throw new IllegalStateException("Unknown join type " + join.getType());
+                                   }
+                               })
+                               .map(right -> new Join.JoinResult(left, right));
+                });
+            }
+        }
+
+        result = result.map(queryPlan.getResultMapping());
+        List<List<ByteBuffer>> results = result.collect(Collectors.toList()).block();
+        return new ResultMessage.Rows(new ResultSet(selection.getResultMetadata(), results));
+    }
+
+    private Flux<List<ByteBuffer>> expandAndFlatten(QueryState state,
+                                                    QueryOptions options,
+                                                    long queryStartNanoTime,
+                                                    boolean internal,
+                                                    Flux<ResultMessage.Rows> flux)
+    {
+        return flux.expand(r -> fetchNext(state, options, queryStartNanoTime, internal, r))
+                   .flatMap(r -> Flux.fromIterable(r.result.rows));
+    }
+
+    private Flux<ResultMessage.Rows> fetchNext(QueryState state,
+                                               QueryOptions options,
+                                               long queryStartNanoTime,
+                                               boolean internal,
+                                               ResultMessage.Rows result)
+    {
+        boolean morePages = result.result.metadata.getFlags().contains(ResultSet.Flag.HAS_MORE_PAGES);
+        if (morePages)
+        {
+            QueryOptions queryOptions = QueryOptions.forJoinQuery(options,
+                                                                  result.result.metadata.getPagingState(),
+                                                                  Collections.emptyList());
+            return executeAsync(state,
+                                queryOptions,
+                                queryStartNanoTime,
+                                internal);
+        }
+        return Flux.empty();
+    }
+
 
     public ReadQuery getQuery(QueryOptions options, int nowInSec) throws RequestValidationException
     {
@@ -436,6 +558,18 @@ public class SelectStatement implements CQLStatement
     }
 
     public ResultMessage.Rows executeInternal(QueryState state, QueryOptions options, int nowInSec, long queryStartNanoTime) throws RequestExecutionException, RequestValidationException
+    {
+        if (queryPlan == null)
+        {
+            return executeRegularInternal(state, options, nowInSec, queryStartNanoTime);
+        }
+        else
+        {
+            return executeJoinQuery(state, options, queryStartNanoTime, true);
+        }
+    }
+
+    private ResultMessage.Rows executeRegularInternal(QueryState state, QueryOptions options, int nowInSec, long queryStartNanoTime)
     {
         int userLimit = getLimit(options);
         int userPerPartitionLimit = getPerPartitionLimit(options);
@@ -980,7 +1114,18 @@ public class SelectStatement implements CQLStatement
             validateJoins(tableResolver);
             QueryPlanner queryPlanner = new QueryPlanner(this);
             QueryPlanner.QueryPlan queryPlan = queryPlanner.prepare();
-            return null;
+            TableMetadata table = queryPlan.getJoins().get(0).getSelect().table;
+            return new SelectStatement(table,
+                                       VariableSpecifications.empty(),
+                                       defaultParameters,
+                                       Selection.forQueryPlan(queryPlan),
+                                       StatementRestrictions.empty(StatementType.SELECT, table),
+                                       false,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       queryPlan);
         }
 
         private SelectStatement prepareRegularSelect(boolean forView)
@@ -1043,31 +1188,12 @@ public class SelectStatement implements CQLStatement
                                        orderingComparator,
                                        prepareLimit(bindVariables, limit, keyspace(), limitReceiver()),
                                        prepareLimit(bindVariables, perPartitionLimit, keyspace(), perPartitionLimitReceiver()),
-                                       Collections.emptyList());
+                                       null);
         }
 
         private void validateJoins(TableResolver tableResolver)
         {
-            joinClauses.stream().forEach(join -> {
-
-                Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> first = join.getJoinColumns().get(0);
-                for (Pair<ColumnMetadata.Raw, ColumnMetadata.Raw> joinColumn : join.getJoinColumns())
-                {
-                    checkNotNull(tableResolver.resolveTableMetadata(joinColumn.left().getTableAlias()),
-                                 "Undefined table alias %s in %s", joinColumn.left().getTableAlias(), join);
-                    checkNotNull(tableResolver.resolveTableMetadata(joinColumn.right().getTableAlias()),
-                                 "Undefined table alias %s in %s", joinColumn.right().getTableAlias(), join);
-                    checkNotNull(tableResolver.resolveColumn(joinColumn.left()),
-                                 "Undefined column %s in %s", joinColumn.left(), join);
-                    checkNotNull(tableResolver.resolveColumn(joinColumn.right()),
-                                 "Undefined column %s in %s", joinColumn.right(), join);
-                    checkTrue(Objects.equals(joinColumn.left().getTableAlias(), first.left().getTableAlias()) &&
-                              Objects.equals(joinColumn.right().getTableAlias(), first.right().getTableAlias()) ||
-                              Objects.equals(joinColumn.left().getTableAlias(), first.right().getTableAlias()) &&
-                              Objects.equals(joinColumn.right().getTableAlias(), first.left().getTableAlias()),
-                              "Two tables must be referenced in %s", join);
-                }
-            });
+            joinClauses.stream().forEach(join->join.validate(tableResolver));
         }
 
         private void validateAliases(TableResolver tableResolver)
@@ -1077,7 +1203,7 @@ public class SelectStatement implements CQLStatement
                 {
                     ColumnIdentifier selectableAlias = ((Selectable.RawIdentifier) selector.selectable).getTableAlias();
                     checkNotNull(tableResolver.resolveTable(selectableAlias),
-                              "Undefined table alias %s for selection %s", defaultAlias(selectableAlias), selector.selectable);
+                                 "Undefined table alias %s for selection %s", defaultAlias(selectableAlias), selector.selectable);
                 }
             });
 
