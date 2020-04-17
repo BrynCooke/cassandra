@@ -492,7 +492,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
          */
         public static Raw forUnquoted(String text)
         {
-            return new Literal(text, false);
+            return new Literal(text, false, null);
         }
 
         /**
@@ -500,7 +500,23 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
          */
         public static Raw forQuoted(String text)
         {
-            return new Literal(text, true);
+            return new Literal(text, true, null);
+        }
+
+        /**
+         * Creates a {@code ColumnMetadata.Raw} from an unquoted identifier string with an alias.
+         */
+        public static Raw forUnquoted(String text, ColumnIdentifier alias)
+        {
+            return new Literal(text, false, alias);
+        }
+
+        /**
+         * Creates a {@code ColumnMetadata.Raw} from a quoted identifier string with an alias.
+         */
+        public static Raw forQuoted(String text, ColumnIdentifier alias)
+        {
+            return new Literal(text, true, alias);
         }
 
         /**
@@ -540,13 +556,15 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
             return this.toString().equals(that.toString());
         }
 
-        private static class Literal extends Raw
+        public static class Literal extends Raw
         {
             private final String text;
+            private ColumnIdentifier tableAlias;
 
-            public Literal(String rawText, boolean keepCase)
+            public Literal(String rawText, boolean keepCase, ColumnIdentifier tableAlias)
             {
                 this.text =  keepCase ? rawText : rawText.toLowerCase(Locale.US);
+                this.tableAlias = tableAlias;
             }
 
             public ColumnIdentifier getIdentifier(TableMetadata table)
@@ -607,10 +625,22 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
                 return text;
             }
 
+            public ColumnIdentifier getTableAlias()
+            {
+                return tableAlias;
+            }
+
             @Override
             public String toString()
             {
-                return ColumnIdentifier.maybeQuote(text);
+                if(tableAlias == null)
+                {
+                    return ColumnIdentifier.maybeQuote(text);
+                }
+                else
+                {
+                    return tableAlias + "." + ColumnIdentifier.maybeQuote(text);
+                }
             }
         }
 

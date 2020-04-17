@@ -74,12 +74,6 @@ public abstract class Selection
         this.orderingColumns = orderingColumns.isEmpty() ? Collections.emptyList() : new ArrayList<>(orderingColumns);
     }
 
-    // Overriden by SimpleSelection when appropriate.
-    public boolean isWildcard()
-    {
-        return false;
-    }
-
     /**
      * Checks if this selection contains static columns.
      * @return <code>true</code> if this selection contains static columns, <code>false</code> otherwise;
@@ -88,9 +82,6 @@ public abstract class Selection
     {
         if (table.isStaticCompactTable() || !table.hasStaticColumns())
             return false;
-
-        if (isWildcard())
-            return true;
 
         return !Iterables.isEmpty(Iterables.filter(columns, STATIC_COLUMN_FILTER));
     }
@@ -129,25 +120,12 @@ public abstract class Selection
     {
         List<ColumnMetadata> all = new ArrayList<>(table.columns().size());
         Iterators.addAll(all, table.allColumnsInSelectOrder());
-        return new SimpleSelection(table, all, Collections.emptySet(), true, isJson);
-    }
-
-    public static Selection wildcardWithGroupBy(TableMetadata table,
-                                                VariableSpecifications boundNames,
-                                                boolean isJson)
-    {
-        return fromSelectors(table,
-                             Lists.newArrayList(table.allColumnsInSelectOrder()),
-                             boundNames,
-                             Collections.emptySet(),
-                             Collections.emptySet(),
-                             true,
-                             isJson);
+        return new SimpleSelection(table, all, Collections.emptySet(), isJson);
     }
 
     public static Selection forColumns(TableMetadata table, List<ColumnMetadata> columns)
     {
-        return new SimpleSelection(table, columns, Collections.emptySet(), false, false);
+        return new SimpleSelection(table, columns, Collections.emptySet(), false);
     }
 
     public void addFunctionsTo(List<Function> functions)
@@ -379,21 +357,16 @@ public abstract class Selection
     // Special cased selection for when only columns are selected.
     private static class SimpleSelection extends Selection
     {
-        private final boolean isWildcard;
-
         public SimpleSelection(TableMetadata table,
                                List<ColumnMetadata> selectedColumns,
                                Set<ColumnMetadata> orderingColumns,
-                               boolean isWildcard,
                                boolean isJson)
         {
             this(table,
                  selectedColumns,
                  orderingColumns,
                  SelectionColumnMapping.simpleMapping(selectedColumns),
-                 isWildcard ? ColumnFilterFactory.wildcard(table)
-                            : ColumnFilterFactory.fromColumns(table, selectedColumns, orderingColumns, Collections.emptySet()),
-                 isWildcard,
+                 ColumnFilterFactory.fromColumns(table, selectedColumns, orderingColumns, Collections.emptySet()),
                  isJson);
         }
 
@@ -409,7 +382,6 @@ public abstract class Selection
                  orderingColumns,
                  mapping,
                  ColumnFilterFactory.fromColumns(table, selectedColumns, orderingColumns, nonPKRestrictedColumns),
-                 false,
                  isJson);
         }
 
@@ -418,7 +390,6 @@ public abstract class Selection
                                 Set<ColumnMetadata> orderingColumns,
                                 SelectionColumnMapping mapping,
                                 ColumnFilterFactory columnFilterFactory,
-                                boolean isWildcard,
                                 boolean isJson)
         {
             /*
@@ -427,14 +398,8 @@ public abstract class Selection
              * get much duplicate in practice, it's more efficient not to bother.
              */
             super(table, selectedColumns, orderingColumns, mapping, columnFilterFactory, isJson);
-            this.isWildcard = isWildcard;
         }
 
-        @Override
-        public boolean isWildcard()
-        {
-            return isWildcard;
-        }
 
         public boolean isAggregate()
         {
