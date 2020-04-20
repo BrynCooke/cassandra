@@ -596,6 +596,13 @@ public interface Selectable extends AssignmentTestable
             {
                 return new WithFieldSelection(selected.prepare(table), field);
             }
+
+            public Selectable.Raw getSelected()
+            {
+                return selected;
+            }
+
+
         }
     }
 

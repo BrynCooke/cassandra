@@ -75,18 +75,6 @@ public abstract class Selection
         this.orderingColumns = orderingColumns.isEmpty() ? Collections.emptyList() : new ArrayList<>(orderingColumns);
     }
 
-    public static Selection forQueryPlan(QueryPlanner.QueryPlan queryPlan)
-    {
-        //TODO HACK alert. This needs to be rewritten so actually build a selection properly.
-        //This will make non literal columns work correctly
-        return new SimpleSelection(queryPlan.getJoins().get(0).getSelect().table, Collections.emptyList(), Collections.emptySet(), false) {
-            public ResultSet.ResultMetadata getResultMetadata()
-            {
-                return queryPlan.getMetadata();
-            }
-        };
-    }
-
     /**
      * Checks if this selection contains static columns.
      * @return <code>true</code> if this selection contains static columns, <code>false</code> otherwise;
@@ -584,4 +572,28 @@ public abstract class Selection
         }
 
     }
+
+    public static Selection forQueryPlan(QueryPlanner.QueryPlan queryPlan)
+    {
+        List<Selectable> selectables = queryPlan.getSelectables();
+        List<ColumnMetadata> selectedColumns = new ArrayList<>();
+        TableMetadata table = queryPlan.getPrimaryTable();
+
+        SelectorFactories factories = SelectorFactories.createFactoriesAndCollectColumnDefinitions(selectables, null, table, selectedColumns, queryPlan.getBoundNames());
+        SelectionColumnMapping mapping = collectColumnMappings(table, factories);
+
+        Set<ColumnMetadata> filteredOrderingColumns = filterOrderingColumns(queryPlan.getOrderingColumns(),
+                                                                            selectedColumns,
+                                                                            factories,
+                                                                            queryPlan.isJson());
+
+        return new SelectionWithProcessing(table,
+                                             selectedColumns,
+                                             filteredOrderingColumns,
+                                             queryPlan.getNonPKRestrictedColumns(),
+                                             mapping,
+                                             factories,
+                                             queryPlan.isJson());
+    }
+
 }

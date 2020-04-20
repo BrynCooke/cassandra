@@ -346,9 +346,9 @@ public class SelectStatement implements CQLStatement
             }
         }
 
-        result = result.map(queryPlan.getResultMapping());
+        result = result.map(queryPlan.getResultMapping(selection));
         List<List<ByteBuffer>> results = result.collect(Collectors.toList()).block();
-        return new ResultMessage.Rows(new ResultSet(selection.getResultMetadata(), results));
+        return new ResultMessage.Rows(new ResultSet(getResultMetadata().copy(), results));
     }
 
     private Flux<List<ByteBuffer>> expandAndFlatten(QueryState state,
@@ -1103,9 +1103,9 @@ public class SelectStatement implements CQLStatement
             }
         }
 
-        public int getBindVariablesSize()
+        public VariableSpecifications getBindVariables()
         {
-            return bindVariables.getBindVariables().size();
+            return bindVariables;
         }
 
         private SelectStatement prepareJoinSelect(TableResolver tableResolver)
@@ -1116,7 +1116,7 @@ public class SelectStatement implements CQLStatement
             QueryPlanner.QueryPlan queryPlan = queryPlanner.prepare();
             TableMetadata table = queryPlan.getJoins().get(0).getSelect().table;
             return new SelectStatement(table,
-                                       VariableSpecifications.empty(),
+                                       queryPlan.getBoundNames(),
                                        defaultParameters,
                                        Selection.forQueryPlan(queryPlan),
                                        StatementRestrictions.empty(StatementType.SELECT, table),

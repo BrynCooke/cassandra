@@ -24,6 +24,7 @@ import java.util.Map;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
+import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -77,6 +78,17 @@ public class TableResolver
         return schema.getTableMetadata(qualifiedName.getKeyspace(), qualifiedName.getName());
     }
 
+    public TableMetadata resolveTableMetadata(Selectable.Raw selectable)
+    {
+        return resolveTableMetadata(getAlias(selectable));
+    }
+
+
+    public TableMetadata resolveTableMetadata(RawSelector s)
+    {
+        return resolveTableMetadata(s.selectable);
+    }
+
     public ColumnIdentifier getAlias(Selectable.Raw selectable)
     {
         if(selectable instanceof ColumnMetadata.Raw.Literal)
@@ -86,6 +98,13 @@ public class TableResolver
         if(selectable instanceof Selectable.RawIdentifier)
         {
             return ((Selectable.RawIdentifier) selectable).getTableAlias();
+        }
+        if(selectable instanceof Selectable.WithFieldSelection.Raw)
+        {
+            //We may have a field selection, or we may have an alias.
+            Selectable.Raw selected = ((Selectable.WithFieldSelection.Raw) selectable).getSelected();
+            return ColumnIdentifier.getInterned(((Selectable.RawIdentifier) selected).toFieldIdentifier().toString(), true);
+
         }
         return null;
     }
@@ -112,5 +131,13 @@ public class TableResolver
             return resolveColumn((Selectable.RawIdentifier) selectable);
         }
         throw new UnsupportedOperationException("Cannot resolve selectable of type " + selectable.getClass());
+    }
+
+    public TableMetadata resolveTableMetadata(Selectable selectable)
+    {
+        if(selectable instanceof ColumnMetadata) {
+            return schema.getTableMetadata(((ColumnMetadata) selectable).ksName, ((ColumnMetadata) selectable).cfName);
+        }
+        return null;
     }
 }

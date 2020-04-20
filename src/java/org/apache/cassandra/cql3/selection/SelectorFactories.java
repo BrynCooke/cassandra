@@ -21,7 +21,9 @@ import java.util.*;
 
 import com.google.common.collect.Lists;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.VariableSpecifications;

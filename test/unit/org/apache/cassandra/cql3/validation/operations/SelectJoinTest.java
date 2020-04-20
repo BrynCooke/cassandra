@@ -17,11 +17,15 @@
  */
 package org.apache.cassandra.cql3.validation.operations;
 
+import java.util.List;
+
 import org.junit.Before;
 import org.junit.Test;
 
 import org.apache.cassandra.cql3.CQLTester;
+import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.transport.messages.ResultMessage;
 
 
 /**
@@ -87,6 +91,31 @@ public class SelectJoinTest extends CQLTester
                      .replace(employees, "employees")
                      .replace(warehouses, "warehouses");
     }
+
+    @Test
+    public void testInnerJoinWithWhereAndParameter() throws Throwable
+    {
+        assertRows(executeFormattedQuery("SELECT c.id FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id WHERE c.id = ? ALLOW FILTERING", 1),
+                   row(1),
+                   row(1));
+    }
+
+    @Test
+    public void testInnerJoinWithWhereAndParameterPrepared() throws Throwable
+    {
+        prepare(mapTables("SELECT c.id FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id WHERE c.id = ? ALLOW FILTERING"));
+        assertRows(executeFormattedQuery("SELECT c.id FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id WHERE c.id = ? ALLOW FILTERING", 1),
+                   row(1),
+                   row(1));
+    }
+
+    @Test
+    public void testJoinColumnNames() throws Throwable
+    {
+        assertColumnNames(executeFormattedQuery("SELECT c.id, o.id FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id WHERE c.id = ? ALLOW FILTERING", 1),
+                          "c_id", "o_id");
+    }
+
 
     @Test
     public void testInnerJoin() throws Throwable
@@ -164,4 +193,12 @@ public class SelectJoinTest extends CQLTester
                              "INNER JOIN orders o ON c.id = o.customer_id AND c.id = e.id " +
                              "INNER JOIN employees e ON c.id = c.id");
     }
+
+    @Test
+    public void testKeywordSelection() throws Throwable
+    {
+        assertInvalidMessage("Invalid field selection: c of type int is not a user type",
+                             "SELECT c.key FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id ALLOW FILTERING");
+    }
+
 }

@@ -69,7 +69,7 @@ public class RawSelector
                    .collect(Collectors.toList());
     }
 
-    private Selectable prepare(TableMetadata table)
+    public Selectable prepare(TableMetadata table)
     {
         Selectable s = selectable.prepare(table);
         return alias != null ? new AliasedSelectable(s, alias) : s;

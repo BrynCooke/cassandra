@@ -44,11 +44,14 @@ import org.apache.cassandra.cql3.MultiColumnRelation;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.Relation;
-import org.apache.cassandra.cql3.ResultSet;
 import org.apache.cassandra.cql3.SingleColumnRelation;
+import org.apache.cassandra.cql3.VariableSpecifications;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
+import org.apache.cassandra.cql3.selection.Selection;
+import org.apache.cassandra.cql3.selection.SelectionColumnMapping;
+import org.apache.cassandra.cql3.selection.SelectionColumns;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.Pair;
@@ -67,16 +70,34 @@ public class QueryPlanner
     public static class QueryPlan
     {
         private List<Join> joins;
-        private ResultSet.ResultMetadata metadata;
-        private int[] resultMapping;
+        private List<Selectable> selectables;
+        private VariableSpecifications boundNames;
+        private Set<ColumnMetadata> orderingColumns;
+        private Set<ColumnMetadata> nonPKRestrictedColumns;
+        private boolean hasGroupBy;
+        private boolean isJson;
         private List<Selectable.Raw> joinRow;
+        private final List<ColumnMetadata> joinRowColumnMetadata;
 
-        public QueryPlan(List<Selectable.Raw> joinRow, List<Join> joins, ResultSet.ResultMetadata metadata, int[] resultMapping)
+        public QueryPlan(TableResolver tableResolver,
+                         List<Selectable.Raw> joinRow,
+                         List<Join> joins,
+                         List<Selectable> selectables,
+                         VariableSpecifications boundNames,
+                         Set<ColumnMetadata> orderingColumns,
+                         Set<ColumnMetadata> nonPKRestrictedColumns,
+                         boolean hasGroupBy,
+                         boolean isJson)
         {
             this.joinRow = joinRow;
             this.joins = joins;
-            this.metadata = metadata;
-            this.resultMapping = resultMapping;
+            this.selectables = selectables;
+            this.boundNames = boundNames;
+            this.orderingColumns = orderingColumns;
+            this.nonPKRestrictedColumns = nonPKRestrictedColumns;
+            this.hasGroupBy = hasGroupBy;
+            this.isJson = isJson;
+            joinRowColumnMetadata = joinRow.stream().map(c->tableResolver.resolveColumn(c)).collect(Collectors.toList());
         }
 
         public List<Selectable.Raw> getJoinRow()
@@ -89,13 +110,39 @@ public class QueryPlanner
             return Collections.unmodifiableList(joins);
         }
 
-        public int[] getResultMappingIndexes()
+        public List<Selectable> getSelectables()
         {
-            return resultMapping;
+            return selectables;
         }
 
-        public Function<List<ByteBuffer>, List<ByteBuffer>> getResultMapping()
+        public boolean isJson()
         {
+            return isJson;
+        }
+
+        public TableMetadata getPrimaryTable()
+        {
+            return joins.get(0).getSelect().table;
+        }
+
+        public Set<ColumnMetadata> getNonPKRestrictedColumns()
+        {
+            return nonPKRestrictedColumns;
+        }
+
+        public Set<ColumnMetadata> getOrderingColumns()
+        {
+            return orderingColumns;
+        }
+
+        public VariableSpecifications getBoundNames()
+        {
+            return boundNames;
+        }
+
+        public Function<List<ByteBuffer>, List<ByteBuffer>> getResultMapping(Selection selection)
+        {
+            int[] resultMapping = selection.getColumns().stream().mapToInt(c -> joinRowColumnMetadata.indexOf(c)).toArray();
             return source -> new AbstractList<ByteBuffer>()
             {
 
@@ -106,14 +153,10 @@ public class QueryPlanner
 
                 public ByteBuffer get(int index)
                 {
+
                     return source.get(resultMapping[index]);
                 }
             };
-        }
-
-        public ResultSet.ResultMetadata getMetadata()
-        {
-            return metadata;
         }
     }
 
@@ -151,84 +194,68 @@ public class QueryPlanner
                                        parameterIndexes,
                                        subSelect));
         }
-
-        List<RawSelector> expandedSelectors = expandedSelectors();
-        ResultSet.ResultMetadata metadata = resultMetaData(expandedSelectors);
-        int[] resultMapping = resultMapping(expandedSelectors, joinRow);
-
-        return new QueryPlan(joinRow, preparedJoins, metadata, resultMapping);
+        VariableSpecifications boundVariables = getBoundVariables(preparedJoins);
+        List<Selectable> selectables = getSelectables();
+        return new QueryPlan(tableResolver,
+                             joinRow,
+                             preparedJoins,
+                             selectables,
+                             boundVariables,
+                             Collections.emptySet(),
+                             Collections.emptySet(),
+                             !raw.parameters.groups.isEmpty(),
+                             raw.parameters.isJson);
     }
 
-    private int[] resultMapping(List<RawSelector> expandedSelectors, List<Selectable.Raw> joinRow)
+    private VariableSpecifications getBoundVariables(List<Join> preparedJoins)
     {
-        return expandedSelectors.stream().mapToInt(selector -> {
-            if (selector.selectable instanceof Selectable.RawIdentifier)
-            {
-                Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) selector.selectable;
-                ColumnMetadata column = tableResolver.resolveColumn(selectable);
-                int i = joinRow.indexOf(ColumnMetadata.Raw.Literal.forQuoted(column.name.toString(), selectable.getTableAlias()));
-                Preconditions.checkState(i != -1, "Failed to find column in result set.");
-                return i;
+        VariableSpecifications variableSpecifications = new VariableSpecifications(Collections.nCopies(raw.getBindVariables().getBindVariables().size(), null));
+        preparedJoins.stream().map(j->j.getSelect().bindVariables).forEach(b->{
+            for(int count = 0; count < raw.getBindVariables().getBindVariables().size(); count++) {
+                ColumnSpecification columnSpecification = b.getBindVariables().get(count);
+                if(columnSpecification != null) {
+                    variableSpecifications.add(count, columnSpecification);
+                }
             }
-            if (selector.selectable instanceof ColumnMetadata.Raw.Literal)
-            {
-                ColumnMetadata.Raw.Literal selectable = (ColumnMetadata.Raw.Literal) selector.selectable;
-                ColumnMetadata column = tableResolver.resolveColumn(selectable);
-                int i = joinRow.indexOf(ColumnMetadata.Raw.Literal.forQuoted(column.name.toString(), selectable.getTableAlias()));
-                Preconditions.checkState(i != -1, "Failed to find column in result set.");
-                return i;
-            }
-            throw new UnsupportedOperationException("Only regular columns may be used in joins");
-        })
-                                .toArray();
+        });
+        return variableSpecifications;
     }
 
-    private ResultSet.ResultMetadata resultMetaData(List<RawSelector> expandedSelectors)
+    private List<Selectable> getSelectables()
     {
-        List<ColumnSpecification> columns;
-        columns = expandedSelectors.stream()
-                                   .map(selector -> {
-                                       ColumnMetadata column = tableResolver.resolveColumn(selector.selectable);
-                                       ColumnIdentifier alias = tableResolver.getAlias(selector.selectable);
-                                       ColumnSpecification columnSpecification = new ColumnSpecification(column.ksName,
-                                                                                                         column.cfName,
-                                                                                                         column.name,
-                                                                                                         column.type);
-                                       if (selector.alias != null)
+        return raw.selectClause.stream()
+                               .flatMap(s -> {
+                                   if (s.selectable instanceof Selectable.RawIdentifier)
+                                   {
+                                       Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) s.selectable;
+                                       if (((Selectable.RawIdentifier) s.selectable).isWildCard())
                                        {
-                                           columnSpecification = columnSpecification.withAlias(selector.alias);
+                                           TableMetadata tableMetadata = tableResolver.resolveTableMetadata(selectable.getTableAlias());
+                                           return Lists.newArrayList(tableMetadata.allColumnsInSelectOrder())
+                                                       .stream()
+                                                       .map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), getAlias(c.name.toString(), selectable.getTableAlias())));
+
                                        }
-                                       else if (alias != null)
+                                       else if (s.alias == null && ((Selectable.RawIdentifier) s.selectable).getTableAlias() != null)
                                        {
-                                           columnSpecification = columnSpecification.withAlias(ColumnIdentifier.getInterned(alias.toString() + "." + column.name, true));
+                                           return Stream.of(new RawSelector(s.selectable, getAlias(selectable.toFieldIdentifier().toString(), selectable.getTableAlias())));
                                        }
+                                   }
 
-                                       return columnSpecification;
-                                   })
-                                   .collect(Collectors.toList());
-
-        return new ResultSet.ResultMetadata(columns);
+                                   return Stream.of(s);
+                               })
+                               .map(s -> s.prepare(tableResolver.resolveTableMetadata(s)))
+                               .collect(Collectors.toList());
     }
 
-    private List<RawSelector> expandedSelectors()
+    private ColumnIdentifier getAlias(String raw, ColumnIdentifier tableAlias)
     {
-        return raw.selectClause
-               .stream()
-               .filter(s -> s.selectable instanceof Selectable.RawIdentifier)
-               .flatMap(s -> {
-                   if (((Selectable.RawIdentifier) s.selectable).isWildCard())
-                   {
-                       Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) s.selectable;
-                       TableMetadata tableMetadata = tableResolver.resolveTableMetadata(selectable.getTableAlias());
-                       return Lists.newArrayList(tableMetadata.allColumnsInSelectOrder())
-                                   .stream()
-                                   .map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), null));
-                   }
-                   return Stream.of(s);
-               })
-               .collect(Collectors.toList());
+        if (tableAlias == null)
+        {
+            return ColumnIdentifier.getInterned(raw, true);
+        }
+        return ColumnIdentifier.getInterned(tableAlias.toString() + "_" + raw, true);
     }
-
 
     private List<SelectStatement.RawStatement> selectStatements(List<Join.Raw> joins)
     {
@@ -250,7 +277,7 @@ public class QueryPlanner
                                                                                          where.build(),
                                                                                          raw.limit,
                                                                                          raw.perPartitionLimit);
-            rawStatement.setBindVariables(Collections.nCopies(raw.getBindVariablesSize() + j.getJoinColumns().size(), null));
+            rawStatement.setBindVariables(Collections.nCopies(raw.getBindVariables().getBindVariables().size() + j.getJoinColumns().size(), null));
             return rawStatement;
         }).collect(Collectors.toList());
         return statements;
@@ -258,7 +285,7 @@ public class QueryPlanner
 
     private List<Relation> joinWheres(Join.Raw join)
     {
-        AtomicInteger bindingIndex = new AtomicInteger(raw.getBindVariablesSize());
+        AtomicInteger bindingIndex = new AtomicInteger(raw.getBindVariables().getBindVariables().size());
         return join.getJoinColumns()
                    .stream()
                    .map(jc -> new SingleColumnRelation(join.getJoinColumn(jc),

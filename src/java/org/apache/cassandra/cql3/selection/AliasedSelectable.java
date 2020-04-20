@@ -91,4 +91,9 @@ final class AliasedSelectable implements Selectable
     {
         return selectable.selectColumns(predicate);
     }
+
+    public String toString()
+    {
+        return alias.toString();
+    }
 }
