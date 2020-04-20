@@ -218,6 +218,11 @@ public interface Selectable extends AssignmentTestable
             {
                 return new WithTerm(term);
             }
+
+            public String toString()
+            {
+                return term.toString();
+            }
         }
     }
 
@@ -327,6 +332,11 @@ public interface Selectable extends AssignmentTestable
             {
                 this.functionName = functionName;
                 this.args = args;
+            }
+
+            public List<Selectable.Raw> getArgs()
+            {
+                return args;
             }
 
             public static Raw newCountRowsFunction()
@@ -490,6 +500,11 @@ public interface Selectable extends AssignmentTestable
             public WithCast prepare(TableMetadata table)
             {
                 return new WithCast(arg.prepare(table), type);
+            }
+
+            public Selectable.Raw getArg()
+            {
+                return arg;
             }
         }
     }
@@ -697,6 +712,11 @@ public interface Selectable extends AssignmentTestable
             public Raw(List<Selectable.Raw> raws)
             {
                 this.raws = raws;
+            }
+
+            public List<Selectable.Raw> getRaws()
+            {
+                return raws;
             }
 
             public Selectable prepare(TableMetadata cfm)
@@ -1170,6 +1190,12 @@ public interface Selectable extends AssignmentTestable
                     type = type.freeze();
                 return new WithTypeHint(typeRaw.toString(), type, selectable);
             }
+
+            public String toString()
+            {
+                return String.format("(%s)%s", typeRaw, raw);
+            }
+
         }
     }
 

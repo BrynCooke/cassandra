@@ -506,17 +506,17 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
         /**
          * Creates a {@code ColumnMetadata.Raw} from an unquoted identifier string with an alias.
          */
-        public static Raw forUnquoted(String text, ColumnIdentifier alias)
+        public static Raw forUnquoted(String text, ColumnIdentifier tableAlias)
         {
-            return new Literal(text, false, alias);
+            return new Literal(text, false, tableAlias);
         }
 
         /**
          * Creates a {@code ColumnMetadata.Raw} from a quoted identifier string with an alias.
          */
-        public static Raw forQuoted(String text, ColumnIdentifier alias)
+        public static Raw forQuoted(String text, ColumnIdentifier tableAlias)
         {
-            return new Literal(text, true, alias);
+            return new Literal(text, true, tableAlias);
         }
 
         /**

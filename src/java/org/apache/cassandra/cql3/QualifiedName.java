@@ -42,6 +42,13 @@ public class QualifiedName
         this.name = name;
     }
 
+    public QualifiedName(String keyspace, String name, String alias)
+    {
+        this.keyspace = keyspace;
+        this.name = name;
+        this.alias = new ColumnIdentifier(alias, true);
+    }
+
     /**
      * Sets the keyspace.
      *
