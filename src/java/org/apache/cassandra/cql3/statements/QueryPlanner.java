@@ -34,7 +34,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
 import org.apache.cassandra.cql3.AbstractMarker;
@@ -50,8 +49,6 @@ import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.selection.Selection;
-import org.apache.cassandra.cql3.selection.SelectionColumnMapping;
-import org.apache.cassandra.cql3.selection.SelectionColumns;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.Pair;
@@ -153,7 +150,6 @@ public class QueryPlanner
 
                 public ByteBuffer get(int index)
                 {
-
                     return source.get(resultMapping[index]);
                 }
             };
@@ -244,7 +240,17 @@ public class QueryPlanner
 
                                    return Stream.of(s);
                                })
-                               .map(s -> s.prepare(tableResolver.resolveTableMetadata(s)))
+                               .map(s -> {
+                                   TableMetadata tableMetadata = tableResolver.resolveTableMetadata(s);
+                                   if(tableMetadata == null) {
+                                       tableMetadata = tableResolver.resolveTableMetadata((ColumnIdentifier)null);
+                                   }
+                                   if(tableMetadata == null) {
+                                       tableMetadata = tableResolver.resolveTableMetadata(raw.qualifiedName);
+                                   }
+
+                                   return s.prepare(tableMetadata, tableResolver);
+                               })
                                .collect(Collectors.toList());
     }
 

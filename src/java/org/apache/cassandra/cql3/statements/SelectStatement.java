@@ -348,7 +348,15 @@ public class SelectStatement implements CQLStatement
 
         result = result.map(queryPlan.getResultMapping(selection));
         List<List<ByteBuffer>> results = result.collect(Collectors.toList()).block();
-        return new ResultMessage.Rows(new ResultSet(getResultMetadata().copy(), results));
+        Selection.Selectors selectors = selection.newSelectors(options);
+        ResultSetBuilder resultSetBuilder = new ResultSetBuilder(selection.getResultMetadata(), selectors);
+        results.forEach(r->{
+            resultSetBuilder.newRow(null, null);
+            r.forEach(resultSetBuilder::add);
+        });
+
+
+        return new ResultMessage.Rows(resultSetBuilder.build());
     }
 
     private Flux<List<ByteBuffer>> expandAndFlatten(QueryState state,
@@ -1132,7 +1140,7 @@ public class SelectStatement implements CQLStatement
         {
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
-            List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
+            List<Selectable> selectables = RawSelector.toSelectables(selectClause, table, TableResolver.ofPrimary(table));
             boolean containsOnlyStaticColumns = selectOnlyStaticColumns(table, selectables);
 
             StatementRestrictions restrictions = prepareRestrictions(table, bindVariables, containsOnlyStaticColumns, forView);
@@ -1292,7 +1300,7 @@ public class SelectStatement implements CQLStatement
             Map<ColumnMetadata, Boolean> orderingColumns = new LinkedHashMap<>();
             for (Map.Entry<ColumnMetadata.Raw, Boolean> entry : parameters.orderings.entrySet())
             {
-                orderingColumns.put(entry.getKey().prepare(table), entry.getValue());
+                orderingColumns.put(entry.getKey().prepare(table, TableResolver.ofPrimary(table)), entry.getValue());
             }
             return orderingColumns;
         }
@@ -1386,7 +1394,7 @@ public class SelectStatement implements CQLStatement
             Iterator<ColumnMetadata> pkColumns = metadata.primaryKeyColumns().iterator();
             for (ColumnMetadata.Raw raw : parameters.groups)
             {
-                ColumnMetadata def = raw.prepare(metadata);
+                ColumnMetadata def = raw.prepare(metadata, TableResolver.ofPrimary(metadata));
 
                 checkTrue(def.isPartitionKey() || def.isClusteringColumn(),
                           "Group by is currently only supported on the columns of the PRIMARY KEY, got %s", def.name);

@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -49,7 +50,7 @@ public class RawSelector
      * @param raws the <code>RawSelector</code>s to converts.
      * @return a list of <code>Selectable</code>s
      */
-    public static List<Selectable> toSelectables(List<RawSelector> raws, final TableMetadata table)
+    public static List<Selectable> toSelectables(List<RawSelector> raws, final TableMetadata table, TableResolver tableResolver)
     {
         return raws.stream()
                    .flatMap(raw -> {
@@ -65,13 +66,13 @@ public class RawSelector
                            return Stream.of(raw);
                        }
                    })
-                   .map(s -> s.prepare(table))
+                   .map(s -> s.prepare(table, tableResolver))
                    .collect(Collectors.toList());
     }
 
-    public Selectable prepare(TableMetadata table)
+    public Selectable prepare(TableMetadata table, TableResolver tableResolver)
     {
-        Selectable s = selectable.prepare(table);
+        Selectable s = selectable.prepare(table, tableResolver);
         return alias != null ? new AliasedSelectable(s, alias) : s;
     }
 }

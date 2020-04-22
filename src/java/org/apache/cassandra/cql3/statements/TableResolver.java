@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.cql3.statements;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ public class TableResolver
 {
     private Map<ColumnIdentifier, QualifiedName> tables;
     private Schema schema = Schema.instance;
+    private TableMetadata primary;
 
     public TableResolver(QualifiedName primary, List<Join.Raw> joinClauses)
     {
@@ -64,18 +66,38 @@ public class TableResolver
         }
     }
 
+    public TableResolver(TableMetadata primary)
+    {
+        this.primary = primary;
+    }
+
+    public static TableResolver ofPrimary(TableMetadata table)
+    {
+        return new TableResolver(table);
+    }
+
     public QualifiedName resolveTable(ColumnIdentifier alias)
     {
         return tables.get(alias);
     }
 
-    public TableMetadata resolveTableMetadata(ColumnIdentifier alias)
+    public TableMetadata resolveTableMetadata(QualifiedName qualifiedName)
     {
-        QualifiedName qualifiedName = tables.get(alias);
+        if(primary != null) {
+            return primary;
+        }
         if(qualifiedName == null) {
             return null;
         }
         return schema.getTableMetadata(qualifiedName.getKeyspace(), qualifiedName.getName());
+    }
+
+    public TableMetadata resolveTableMetadata(ColumnIdentifier alias)
+    {
+        if(primary != null) {
+            return primary;
+        }
+        return resolveTableMetadata(tables.get(alias));
     }
 
     public TableMetadata resolveTableMetadata(Selectable.Raw selectable)
@@ -98,13 +120,6 @@ public class TableResolver
         if(selectable instanceof Selectable.RawIdentifier)
         {
             return ((Selectable.RawIdentifier) selectable).getTableAlias();
-        }
-        if(selectable instanceof Selectable.WithFieldSelection.Raw)
-        {
-            //We may have a field selection, or we may have an alias.
-            Selectable.Raw selected = ((Selectable.WithFieldSelection.Raw) selectable).getSelected();
-            return ColumnIdentifier.getInterned(((Selectable.RawIdentifier) selected).toFieldIdentifier().toString(), true);
-
         }
         return null;
     }
@@ -133,11 +148,4 @@ public class TableResolver
         throw new UnsupportedOperationException("Cannot resolve selectable of type " + selectable.getClass());
     }
 
-    public TableMetadata resolveTableMetadata(Selectable selectable)
-    {
-        if(selectable instanceof ColumnMetadata) {
-            return schema.getTableMetadata(((ColumnMetadata) selectable).ksName, ((ColumnMetadata) selectable).cfName);
-        }
-        return null;
-    }
 }

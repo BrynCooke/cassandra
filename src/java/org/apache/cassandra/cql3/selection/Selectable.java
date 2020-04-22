@@ -28,6 +28,7 @@ import org.apache.commons.lang3.text.StrBuilder;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.functions.*;
 import org.apache.cassandra.cql3.selection.Selector.Factory;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -117,7 +118,7 @@ public interface Selectable extends AssignmentTestable
 
     public static abstract class Raw
     {
-        public abstract Selectable prepare(TableMetadata table);
+        public abstract Selectable prepare(TableMetadata table, TableResolver tableResolver);
     }
 
     public static class WithTerm implements Selectable
@@ -214,7 +215,7 @@ public interface Selectable extends AssignmentTestable
                 this.term = term;
             }
 
-            public Selectable prepare(TableMetadata table)
+            public Selectable prepare(TableMetadata table, TableResolver tableResolver)
             {
                 return new WithTerm(term);
             }
@@ -282,9 +283,9 @@ public interface Selectable extends AssignmentTestable
                 this.isWritetime = isWritetime;
             }
 
-            public WritetimeOrTTL prepare(TableMetadata table)
+            public WritetimeOrTTL prepare(TableMetadata table, TableResolver tableResolver)
             {
-                return new WritetimeOrTTL(id.prepare(table), isWritetime);
+                return new WritetimeOrTTL(id.prepare(table, tableResolver), isWritetime);
             }
         }
     }
@@ -357,11 +358,11 @@ public interface Selectable extends AssignmentTestable
                                Collections.singletonList(arg));
             }
 
-            public Selectable prepare(TableMetadata table)
+            public Selectable prepare(TableMetadata table, TableResolver tableResolver)
             {
                 List<Selectable> preparedArgs = new ArrayList<>(args.size());
                 for (Selectable.Raw arg : args)
-                    preparedArgs.add(arg.prepare(table));
+                    preparedArgs.add(arg.prepare(table, tableResolver));
 
                 FunctionName name = functionName;
                 // We need to circumvent the normal function lookup process for toJson() because instances of the function
@@ -497,9 +498,9 @@ public interface Selectable extends AssignmentTestable
                 this.type = type;
             }
 
-            public WithCast prepare(TableMetadata table)
+            public WithCast prepare(TableMetadata table, TableResolver tableResolver)
             {
-                return new WithCast(arg.prepare(table), type);
+                return new WithCast(arg.prepare(table, tableResolver), type);
             }
 
             public Selectable.Raw getArg()
@@ -592,9 +593,9 @@ public interface Selectable extends AssignmentTestable
                 this.field = field;
             }
 
-            public WithFieldSelection prepare(TableMetadata table)
+            public WithFieldSelection prepare(TableMetadata table, TableResolver tableResolver)
             {
-                return new WithFieldSelection(selected.prepare(table), field);
+                return new WithFieldSelection(selected.prepare(table, tableResolver), field);
             }
 
             public Selectable.Raw getSelected()
@@ -726,9 +727,9 @@ public interface Selectable extends AssignmentTestable
                 return raws;
             }
 
-            public Selectable prepare(TableMetadata cfm)
+            public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                return new BetweenParenthesesOrWithTuple(raws.stream().map(p -> p.prepare(cfm)).collect(Collectors.toList()));
+                return new BetweenParenthesesOrWithTuple(raws.stream().map(p -> p.prepare(cfm, tableResolver)).collect(Collectors.toList()));
             }
         }
     }
@@ -810,9 +811,9 @@ public interface Selectable extends AssignmentTestable
                 this.raws = raws;
             }
 
-            public Selectable prepare(TableMetadata cfm)
+            public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                return new WithList(raws.stream().map(p -> p.prepare(cfm)).collect(Collectors.toList()));
+                return new WithList(raws.stream().map(p -> p.prepare(cfm, tableResolver)).collect(Collectors.toList()));
             }
         }
     }
@@ -902,9 +903,9 @@ public interface Selectable extends AssignmentTestable
                 this.raws = raws;
             }
 
-            public Selectable prepare(TableMetadata cfm)
+            public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                return new WithSet(raws.stream().map(p -> p.prepare(cfm)).collect(Collectors.toList()));
+                return new WithSet(raws.stream().map(p -> p.prepare(cfm, tableResolver)).collect(Collectors.toList()));
             }
         }
     }
@@ -1003,7 +1004,7 @@ public interface Selectable extends AssignmentTestable
 
                 AbstractType<?> fieldType = ut.fieldType(fieldPosition);
                 factories.put(fieldName,
-                              raw.right.prepare(cfm).newSelectorFactory(cfm, fieldType, defs, boundNames));
+                              raw.right.prepare(cfm, null).newSelectorFactory(cfm, fieldType, defs, boundNames));
             }
 
             return UserTypeSelector.newFactory(expectedType, factories);
@@ -1021,10 +1022,10 @@ public interface Selectable extends AssignmentTestable
         {
             for (Pair<Selectable.Raw, Selectable.Raw> raw : raws)
             {
-                if (!(raw.left instanceof RawIdentifier) && raw.left.prepare(cfm).selectColumns(predicate))
+                if (!(raw.left instanceof RawIdentifier) && raw.left.prepare(cfm, TableResolver.ofPrimary(cfm)).selectColumns(predicate))
                     return true;
 
-                if (!raw.right.prepare(cfm).selectColumns(predicate))
+                if (!raw.right.prepare(cfm, null).selectColumns(predicate))
                     return true;
             }
             return false;
@@ -1035,15 +1036,15 @@ public interface Selectable extends AssignmentTestable
         {
             return raws.stream()
                        .map(p -> String.format("%s: %s",
-                                               p.left instanceof RawIdentifier ? p.left : p.left.prepare(cfm),
-                                               p.right.prepare(cfm)))
+                                               p.left instanceof RawIdentifier ? p.left : p.left.prepare(cfm, TableResolver.ofPrimary(cfm)),
+                                               p.right.prepare(cfm, TableResolver.ofPrimary(cfm))))
                        .collect(Collectors.joining(", ", "{", "}"));
         }
 
         private List<Pair<Selectable, Selectable>> getMapEntries(TableMetadata cfm)
         {
             return raws.stream()
-                       .map(p -> Pair.create(p.left.prepare(cfm), p.right.prepare(cfm)))
+                       .map(p -> Pair.create(p.left.prepare(cfm, null), p.right.prepare(cfm, TableResolver.ofPrimary(cfm))))
                        .collect(Collectors.toList());
         }
 
@@ -1066,7 +1067,7 @@ public interface Selectable extends AssignmentTestable
                                          fieldName,
                                          ut.getNameAsString());
 
-                fields.put(fieldName, raw.right.prepare(cfm));
+                fields.put(fieldName, raw.right.prepare(cfm, TableResolver.ofPrimary(cfm)));
             }
 
             return fields;
@@ -1081,7 +1082,7 @@ public interface Selectable extends AssignmentTestable
                 this.raws = raws;
             }
 
-            public Selectable prepare(TableMetadata cfm)
+            public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
             {
                 return new WithMapOrUdt(cfm, raws);
             }
@@ -1189,9 +1190,9 @@ public interface Selectable extends AssignmentTestable
                 this.raw = raw;
             }
 
-            public Selectable prepare(TableMetadata cfm)
+            public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                Selectable selectable = raw.prepare(cfm);
+                Selectable selectable = raw.prepare(cfm, tableResolver);
                 AbstractType<?> type = this.typeRaw.prepare(cfm.keyspace).getType();
                 if (type.isFreezable())
                     type = type.freeze();
@@ -1249,12 +1250,13 @@ public interface Selectable extends AssignmentTestable
         }
 
         @Override
-        public Selectable prepare(TableMetadata cfm)
+        public Selectable prepare(TableMetadata cfm, TableResolver tableResolver)
         {
+            TableMetadata tableMetadata = tableResolver.resolveTableMetadata(tableAlias);
             Preconditions.checkState(!isWildCard(), "Wildcards should have been expanded");
             ColumnMetadata.Raw raw = quoted ? ColumnMetadata.Raw.forQuoted(text)
                                             : ColumnMetadata.Raw.forUnquoted(text);
-            return raw.prepare(cfm);
+            return raw.prepare(tableMetadata, tableResolver);
         }
 
         public FieldIdentifier toFieldIdentifier()
@@ -1346,9 +1348,9 @@ public interface Selectable extends AssignmentTestable
                 this.element = element;
             }
 
-            public WithElementSelection prepare(TableMetadata cfm)
+            public WithElementSelection prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                return new WithElementSelection(selected.prepare(cfm), element);
+                return new WithElementSelection(selected.prepare(cfm, tableResolver), element);
             }
 
             @Override
@@ -1435,9 +1437,9 @@ public interface Selectable extends AssignmentTestable
                 this.to = to;
             }
 
-            public WithSliceSelection prepare(TableMetadata cfm)
+            public WithSliceSelection prepare(TableMetadata cfm, TableResolver tableResolver)
             {
-                return new WithSliceSelection(selected.prepare(cfm), from, to);
+                return new WithSliceSelection(selected.prepare(cfm, tableResolver), from, to);
             }
 
             @Override

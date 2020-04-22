@@ -29,6 +29,7 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.selection.Selector;
 import org.apache.cassandra.cql3.selection.SimpleSelector;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -540,7 +541,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
         public abstract ColumnIdentifier getTableAlias();
 
         @Override
-        public abstract ColumnMetadata prepare(TableMetadata table);
+        public abstract ColumnMetadata prepare(TableMetadata table, TableResolver tableResolver);
 
         @Override
         public final int hashCode()
@@ -589,7 +590,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
                 return ColumnIdentifier.getInterned(columnNameType, columnNameType.fromString(text), text);
             }
 
-            public ColumnMetadata prepare(TableMetadata table)
+            public ColumnMetadata prepare(TableMetadata table, TableResolver tableResolver)
             {
                 if (!table.isStaticCompactTable())
                     return find(table);
@@ -662,7 +663,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
                 return column.name;
             }
 
-            public ColumnMetadata prepare(TableMetadata table)
+            public ColumnMetadata prepare(TableMetadata table, TableResolver tableResolver)
             {
                 assert table.getColumn(column.name) != null; // Sanity check that we're not doing something crazy
                 return column;

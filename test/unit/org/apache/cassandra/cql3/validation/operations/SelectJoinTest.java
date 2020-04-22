@@ -116,6 +116,13 @@ public class SelectJoinTest extends CQLTester
                           "c_id", "o_id");
     }
 
+    @Test
+    public void testJoinSumSelectionFunction() throws Throwable
+    {
+        assertRows(executeFormattedQuery("SELECT c.id, o.id, c.id + o.id as total FROM customers AS c INNER JOIN orders o ON c.id = o.customer_id WHERE c.id = ? ALLOW FILTERING", 1),
+        row(1, 1, 2),
+                   row(1, 2, 3));
+    }
 
     @Test
     public void testInnerJoin() throws Throwable

@@ -31,6 +31,7 @@ import org.apache.cassandra.cql3.restrictions.StatementRestrictions;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.StatementType;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.ReversedType;
 import org.apache.cassandra.db.view.View;
@@ -165,7 +166,7 @@ public final class CreateViewStatement extends AlterSchemaStatement
                 throw ire("Can only select columns by name when defining a materialized view (got %s)", selector.selectable);
 
             // will throw IRE if the column doesn't exist in the base table
-            ColumnMetadata column = (ColumnMetadata) selector.selectable.prepare(table);
+            ColumnMetadata column = (ColumnMetadata) selector.selectable.prepare(table, TableResolver.ofPrimary(table));
 
             selectedColumns.add(column.name);
         });
