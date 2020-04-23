@@ -69,6 +69,8 @@ import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -291,11 +293,11 @@ public class SelectStatement implements CQLStatement
     {
         if (internal)
         {
-            return Flux.just(executeInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime));
+            return Flux.from(Mono.fromCallable(() -> executeInternal(state, options, options.getNowInSeconds(state), queryStartNanoTime)));
         }
         else
         {
-            return Flux.just(execute(state, options, queryStartNanoTime));
+            return Flux.from(Mono.fromCallable(()->execute(state, options, queryStartNanoTime)));
         }
     }
 
@@ -311,7 +313,7 @@ public class SelectStatement implements CQLStatement
             }
             else
             {
-                result = result.flatMap(left -> {
+                result = result.flatMapSequential(left -> {
                     ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
                     for (int parameterIdx : join.getJoinMapping())
                     {
@@ -341,7 +343,8 @@ public class SelectStatement implements CQLStatement
                                            throw new IllegalStateException("Unknown join type " + join.getType());
                                    }
                                })
-                               .map(right -> new Join.JoinResult(left, right));
+                               .map(right -> new Join.JoinResult(left, right))
+                               .subscribeOn(Schedulers.elastic());
                 });
             }
         }
