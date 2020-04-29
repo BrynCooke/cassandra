@@ -94,7 +94,7 @@ public class QueryPlanner
             this.nonPKRestrictedColumns = nonPKRestrictedColumns;
             this.hasGroupBy = hasGroupBy;
             this.isJson = isJson;
-            joinRowColumnMetadata = joinRow.stream().map(c->tableResolver.resolveColumn(c)).collect(Collectors.toList());
+            joinRowColumnMetadata = joinRow.stream().map(c -> tableResolver.resolveColumn(c)).collect(Collectors.toList());
         }
 
         public List<Selectable.Raw> getJoinRow()
@@ -183,11 +183,23 @@ public class QueryPlanner
                                          .map(jc -> join.getForeigenJoinColumn(jc))
                                          .mapToInt(joinRow::indexOf)
                                          .toArray();
+            int[] partitionParameterIndexes = join.getJoinColumns().stream()
+                                         .filter(jc->tableResolver.resolveColumn(join.getJoinColumn(jc)).isPartitionKey())
+                                         .map(jc -> join.getForeigenJoinColumn(jc))
+                                         .mapToInt(joinRow::indexOf)
+                                         .toArray();
+            int[] clusteringParameterIndexes = join.getJoinColumns().stream()
+                                                  .filter(jc->tableResolver.resolveColumn(join.getJoinColumn(jc)).isClusteringColumn())
+                                                  .map(jc -> join.getForeigenJoinColumn(jc))
+                                                  .mapToInt(joinRow::indexOf)
+                                                  .toArray();
             preparedJoins.add(new Join(join.getType(),
                                        join.getTable(),
                                        join,
                                        rawStatement,
                                        parameterIndexes,
+                                       partitionParameterIndexes,
+                                       clusteringParameterIndexes,
                                        subSelect));
         }
         VariableSpecifications boundVariables = getBoundVariables(preparedJoins);
@@ -206,10 +218,12 @@ public class QueryPlanner
     private VariableSpecifications getBoundVariables(List<Join> preparedJoins)
     {
         VariableSpecifications variableSpecifications = new VariableSpecifications(Collections.nCopies(raw.getBindVariables().getBindVariables().size(), null));
-        preparedJoins.stream().map(j->j.getSelect().bindVariables).forEach(b->{
-            for(int count = 0; count < raw.getBindVariables().getBindVariables().size(); count++) {
+        preparedJoins.stream().map(j -> j.getSelect().bindVariables).forEach(b -> {
+            for (int count = 0; count < raw.getBindVariables().getBindVariables().size(); count++)
+            {
                 ColumnSpecification columnSpecification = b.getBindVariables().get(count);
-                if(columnSpecification != null) {
+                if (columnSpecification != null)
+                {
                     variableSpecifications.add(count, columnSpecification);
                 }
             }
@@ -230,7 +244,6 @@ public class QueryPlanner
                                            return Lists.newArrayList(tableMetadata.allColumnsInSelectOrder())
                                                        .stream()
                                                        .map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), getAlias(c.name.toString(), selectable.getTableAlias())));
-
                                        }
                                        else if (s.alias == null && ((Selectable.RawIdentifier) s.selectable).getTableAlias() != null)
                                        {
@@ -242,10 +255,12 @@ public class QueryPlanner
                                })
                                .map(s -> {
                                    TableMetadata tableMetadata = tableResolver.resolveTableMetadata(s);
-                                   if(tableMetadata == null) {
-                                       tableMetadata = tableResolver.resolveTableMetadata((ColumnIdentifier)null);
+                                   if (tableMetadata == null)
+                                   {
+                                       tableMetadata = tableResolver.resolveTableMetadata((ColumnIdentifier) null);
                                    }
-                                   if(tableMetadata == null) {
+                                   if (tableMetadata == null)
+                                   {
                                        tableMetadata = tableResolver.resolveTableMetadata(raw.qualifiedName);
                                    }
 
@@ -294,9 +309,16 @@ public class QueryPlanner
         AtomicInteger bindingIndex = new AtomicInteger(raw.getBindVariables().getBindVariables().size());
         return join.getJoinColumns()
                    .stream()
-                   .map(jc -> new SingleColumnRelation(join.getJoinColumn(jc),
-                                                       Operator.EQ,
-                                                       new AbstractMarker.Raw(bindingIndex.getAndIncrement())))
+                   .map(jc -> {
+
+                       ColumnMetadata.Raw joinColumn = join.getJoinColumn(jc);
+                       ColumnMetadata columnMetadata = tableResolver.resolveColumn(joinColumn);
+                       boolean clustering = columnMetadata.isClusteringColumn();
+                       return new SingleColumnRelation(join.getJoinColumn(jc),
+                                                       clustering ? Operator.IN : Operator.EQ,
+                                                       clustering ? new AbstractMarker.INRaw(bindingIndex.getAndIncrement())
+                                                                  : new AbstractMarker.Raw(bindingIndex.getAndIncrement()));
+                   })
                    .collect(Collectors.toList());
     }
 

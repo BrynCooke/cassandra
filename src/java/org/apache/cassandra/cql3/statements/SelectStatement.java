@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.statements;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
@@ -58,7 +59,10 @@ import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.index.IndexRegistry;
+import org.apache.cassandra.serializers.IntegerSerializer;
+import org.apache.cassandra.serializers.ListSerializer;
 import org.apache.cassandra.serializers.MarshalException;
+import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
@@ -74,6 +78,7 @@ import reactor.core.scheduler.Schedulers;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
+import org.apache.commons.lang3.tuple.Pair;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
@@ -309,42 +314,68 @@ public class SelectStatement implements CQLStatement
             if (join.getType() == Join.Type.Primary)
             {
                 result = join.getSelect().executeAsync(state, options, queryStartNanoTime, internal)
-                         .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f));
+                             .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f));
             }
             else
             {
-                result = result.flatMapSequential(left -> {
-                    ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
-                    for (int parameterIdx : join.getJoinMapping())
-                    {
-                        ByteBuffer parameter = left.get(parameterIdx);
-                        params.add(parameter);
-                        if(parameter == null) {
-                            //We must have had a left join that didn't match
-                            return Flux.just(new Join.JoinResult(left, join.getEmptyResult()));
-                        }
-                    }
-                    QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
-                    return join.getSelect()
-                               .executeAsync(state, joinOptions, queryStartNanoTime, internal)
-                               .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
-                               .transform(f -> {
-                                   switch (join.getType())
-                                   {
-                                       case Left:
-                                           //Left joins return an empty result if there is nothing
-                                           return f.defaultIfEmpty(join.getEmptyResult());
-                                       case Right:
-                                           throw new IllegalStateException("Right join should have been converted to left");
-                                       case Inner:
-                                           //Inner don't default if empty and are therefore filtered.
-                                           return f;
-                                       default:
-                                           throw new IllegalStateException("Unknown join type " + join.getType());
-                                   }
-                               })
-                               .map(right -> new Join.JoinResult(left, right))
-                               .subscribeOn(Schedulers.boundedElastic());
+                result = result.buffer(options.getPageSize()).flatMapSequential(left -> {
+
+                    //Assign a sequence number to each row and then group by partition
+                    Map<ByteBuffer, List<Pair<Integer, List<ByteBuffer>>>> groupedByPartition = IntStream
+                                                                                     .range(0, left.size())
+                                                                                     .mapToObj(idx -> Pair.of(idx, left.get(idx)))
+                                                                                     .collect(Collectors.groupingBy(row -> row.getRight().get(join.getJoinParameterPartitionIdx()[0])));
+
+                    List<Flux<List<Pair<Integer, List<ByteBuffer>>>>> results
+                    = groupedByPartition.entrySet().stream()
+                                        .map(r -> {
+                                            //Execute a query against each group.
+                                            //Populate the parameter array
+                                            List<ByteBuffer> clusteringColumnValues = r.getValue().stream().map(d -> d.getRight().get(join.getJoinParameterClusteringIdx()[0])).collect(Collectors.toList());
+                                            ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
+                                            for (int parameterIdx : join.getJoinMapping())
+                                            {
+                                                ByteBuffer parameter;
+                                                if(parameterIdx == join.getJoinParameterClusteringIdx()[0]) {
+                                                    parameter = ByteBuffer.allocate(Integer.BYTES + clusteringColumnValues.stream().mapToInt(v->v.limit()).sum());
+                                                    parameter.putInt(clusteringColumnValues.size());
+                                                    clusteringColumnValues.forEach(parameter::put);
+                                                }
+                                                else
+                                                {
+                                                    parameter = r.getValue().get(0).getRight().get(parameterIdx);
+                                                }
+                                                params.add(parameter);
+                                            }
+
+                                            QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
+                                            return join.getSelect()
+                                                       .executeAsync(state, joinOptions, queryStartNanoTime, internal)
+                                                       .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
+                                                       .transform(f -> {
+                                                           switch (join.getType())
+                                                           {
+                                                               case Left:
+                                                                   //Left joins return an empty result if there is nothing
+                                                                   return f.defaultIfEmpty(join.getEmptyResult());
+                                                               case Right:
+                                                                   throw new IllegalStateException("Right join should have been converted to left");
+                                                               case Inner:
+                                                                   //Inner don't default if empty and are therefore filtered.
+                                                                   return f;
+                                                               default:
+                                                                   throw new IllegalStateException("Unknown join type " + join.getType());
+                                                           }
+                                                       })
+                                                       .map(right -> new Join.JoinResult(left, right))
+                                                       .subscribeOn(Schedulers.boundedElastic());
+
+
+
+                                            )
+                                        })
+                                        .collect(Collectors.toList());
+
                 });
             }
         }

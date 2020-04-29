@@ -53,7 +53,23 @@ public class QueryPlannerTest
         QueryProcessor.executeOnceInternal("CREATE TABLE ks.orders (id int, customer_id int, customer_id2 int, employee_id int, warehouse_id int, primary key (id))");
         QueryProcessor.executeOnceInternal("CREATE TABLE ks.employees (id int, primary key (id))");
         QueryProcessor.executeOnceInternal("CREATE TABLE ks.warehouses (id int, primary key (id))");
+
+        QueryProcessor.executeOnceInternal("CREATE TABLE ks.p_customers (partition int, id int, primary key (partition, id))");
+        QueryProcessor.executeOnceInternal("CREATE TABLE ks.p_orders (partition int, customer_id int, id int, primary key (partition, customer_id, id))");
+
     }
+
+    @Test
+    public void testPartitionedJoin()
+    {
+        assertThat("SELECT c.*, o.* FROM ks.p_customers c INNER JOIN ks.p_orders o ON o.partition = c.partition AND o.customer_id = c.id ALLOW FILTERING")
+        .evaluatesToPlan()
+        .select("ks.p_customers c").withSelectors("c.*", "c.partition", "c.id")
+        .innerJoin("ks.p_orders o", "o.partition = c.partition AND o.customer_id = c.id")
+        .withWhere("o.partition = ?", "o.customer_id IN ?").withForignKeys("c.partition", "c.id")
+        .withNoOtherJoins();
+    }
+
 
     @Test
     public void testBasicSelect()

@@ -71,19 +71,23 @@ public final class Join
 
     private final Type type;
     private QualifiedName table;
+    private int[] joinParameterPartitionIdx;
+    private int[] joinParameterClusteringIdx;
     private SelectStatement select;
     private Raw raw;
     private SelectStatement.RawStatement rawStatement;
     private int[] joinParameterIdx;
     private List<ByteBuffer> emptyResult;
 
-    public Join(Type type, QualifiedName table, Raw raw, SelectStatement.RawStatement rawStatement, int[] joinParameterIdx, SelectStatement select)
+    public Join(Type type, QualifiedName table, Raw raw, SelectStatement.RawStatement rawStatement, int[] joinParameterIdx, int[] joinParameterPartitionIdx, int[] joinParameterClusteringIdx, SelectStatement select)
     {
         this.type = type;
         this.table = table;
         this.raw = raw;
         this.rawStatement = rawStatement;
         this.joinParameterIdx = joinParameterIdx;
+        this.joinParameterPartitionIdx = joinParameterPartitionIdx;
+        this.joinParameterClusteringIdx = joinParameterClusteringIdx;
         this.select = select;
         emptyResult = Collections.nCopies(select.getSelection().getColumns().size(), null);
     }
@@ -116,6 +120,16 @@ public final class Join
     public int[] getJoinMapping()
     {
         return joinParameterIdx;
+    }
+
+    public int[] getJoinParameterPartitionIdx()
+    {
+        return joinParameterPartitionIdx;
+    }
+
+    public int[] getJoinParameterClusteringIdx()
+    {
+        return joinParameterClusteringIdx;
     }
 
     public List<ByteBuffer> getEmptyResult()

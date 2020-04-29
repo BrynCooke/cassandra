@@ -17,7 +17,9 @@
  */
 package org.apache.cassandra.cql3.validation.operations;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -34,18 +36,15 @@ import org.apache.cassandra.transport.messages.ResultMessage;
 public class SelectJoinTest extends CQLTester
 {
 
-    private String customers;
-    private String orders;
-    private String employees;
-    private String warehouses;
+    private Map<String, String> tableMap = new HashMap<>();
 
     @Before
     public void setup() throws Throwable
     {
-        customers = keyspace() + "." + createTable("CREATE TABLE %s (id int, id2 int, id3 int, a int, b int, c int, primary key (id, id2, id3))");
-        orders = keyspace() + "." + createTable("CREATE TABLE %s (id int, customer_id int, customer_id2 int, employee_id int, warehouse_id int, primary key (id))");
-        employees = keyspace() + "." + createTable("CREATE TABLE %s (id int, primary key (id))");
-        warehouses = keyspace() + "." + createTable("CREATE TABLE %s (id int, primary key (id))");
+        tableMap.put("customers", keyspace() + "." + createTable("CREATE TABLE %s (id int, id2 int, id3 int, a int, b int, c int, primary key (id, id2, id3))"));
+        tableMap.put("orders", keyspace() + "." + createTable("CREATE TABLE %s (id int, customer_id int, customer_id2 int, employee_id int, warehouse_id int, primary key (id))"));
+        tableMap.put("employees", keyspace() + "." + createTable("CREATE TABLE %s (id int, primary key (id))"));
+        tableMap.put("warehouses", keyspace() + "." + createTable("CREATE TABLE %s (id int, primary key (id))"));
         executeFormattedQuery("INSERT INTO customers (id, id2, id3, a, b, c) VALUES (?, ?, ?, ?, ?, ?)", 1, 2, 3, 4, 5, 6);
         executeFormattedQuery("INSERT INTO customers (id, id2, id3, a, b, c) VALUES (?, ?, ?, ?, ?, ?)", 2, 3, 4, 5, 6, 7);
         executeFormattedQuery("INSERT INTO orders (id, customer_id, customer_id2, employee_id, warehouse_id) VALUES (?, ?, ?, ?, ?)", 1, 1, 2, 1, 1);
@@ -54,6 +53,15 @@ public class SelectJoinTest extends CQLTester
         executeFormattedQuery("INSERT INTO employees (id) VALUES (?)", 2);
         executeFormattedQuery("INSERT INTO warehouses (id) VALUES (?)", 1);
         executeFormattedQuery("INSERT INTO warehouses (id) VALUES (?)", 2);
+
+        tableMap.put("menus", keyspace() + "." + createTable("CREATE TABLE %s (partition int, id int, primary key (partition, id))"));
+        tableMap.put("items", keyspace() + "." + createTable("CREATE TABLE %s (partition int, id int, menu_id int, primary key (partition, menu_id, id))"));
+        executeFormattedQuery("INSERT INTO menus (partition, id) VALUES (?, ?)", 1, 1);
+        executeFormattedQuery("INSERT INTO menus (partition, id) VALUES (?, ?)", 1, 2);
+        executeFormattedQuery("INSERT INTO items (partition, id, menu_id) VALUES (?, ?, ?)", 1, 1, 1);
+        executeFormattedQuery("INSERT INTO items (partition, id, menu_id) VALUES (?, ?, ?)", 1, 2, 1);
+        executeFormattedQuery("INSERT INTO items (partition, id, menu_id) VALUES (?, ?, ?)", 1, 3, 2);
+        executeFormattedQuery("INSERT INTO items (partition, id, menu_id) VALUES (?, ?, ?)", 1, 4, 2);
     }
 
 
@@ -78,18 +86,28 @@ public class SelectJoinTest extends CQLTester
 
     private String mapTables(String string)
     {
-        return string.replace("customers", customers)
-                     .replace("orders", orders)
-                     .replace("employees", employees)
-                     .replace("warehouses", warehouses);
+        for(Map.Entry<String, String> entry : tableMap.entrySet()) {
+            string = string.replace(entry.getKey(), entry.getValue());
+        }
+        return string;
     }
 
     private String restoreTables(String string)
     {
-        return string.replace(customers, "customers")
-                     .replace(orders, "orders")
-                     .replace(employees, "employees")
-                     .replace(warehouses, "warehouses");
+        for(Map.Entry<String, String> entry : tableMap.entrySet()) {
+            string = string.replace(entry.getValue(), entry.getKey());
+        }
+        return string;
+    }
+
+    @Test
+    public void testInnerJoinPartitioning() throws Throwable
+    {
+        assertRows(executeFormattedQuery("SELECT m.id, i.id FROM menus AS m INNER JOIN items i ON m.partition = i.partition AND i.menu_id = m.id WHERE m.partition = ?", 1),
+                   row(1, 1),
+                   row(1, 2),
+                   row(2, 3),
+                   row(2, 4));
     }
 
     @Test
