@@ -366,8 +366,7 @@ public class SelectStatement implements CQLStatement
                                                  List<List<ByteBuffer>> rows = findRows(left.getRight(), right, join);
                                                  return rows.stream().map(row -> Pair.of(left.getLeft(), new Join.JoinResult(left.getRight(), row)));
                                              }));
-                                         })
-                                         .subscribeOn(Schedulers.boundedElastic());
+                                         });
                           }).collect(Collectors.toList());
     }
 
