@@ -317,7 +317,7 @@ public class SelectStatement implements CQLStatement
             }
             else
             {
-                result = result.buffer(options.getPageSize() == -1 ? 10000 : options.getPageSize()).flatMapSequential(leftBuffer -> {
+                result = result.buffer(100).flatMapSequential(leftBuffer -> {
 
                     //What if we group queries by partition and use an IN clause for the clustering columns
                     //This won't work in practice without breaking paging, but we can look at adding what we need to C* to make this happen.
