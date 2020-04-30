@@ -344,7 +344,7 @@ public class SelectStatement implements CQLStatement
                                    }
                                })
                                .map(right -> new Join.JoinResult(left, right))
-                               .subscribeOn(Schedulers.elastic());
+                               .subscribeOn(Schedulers.boundedElastic());
                 });
             }
         }
