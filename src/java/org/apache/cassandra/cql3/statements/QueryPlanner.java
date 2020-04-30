@@ -193,6 +193,11 @@ public class QueryPlanner
                                                   .map(jc -> join.getForeigenJoinColumn(jc))
                                                   .mapToInt(joinRow::indexOf)
                                                   .toArray();
+            int[] joinResultClusteringIdx = join.getJoinColumns().stream()
+                                                   .filter(jc->tableResolver.resolveColumn(join.getJoinColumn(jc)).isClusteringColumn())
+                                                   .map(jc -> join.getJoinColumn(jc))
+                                                   .mapToInt(joinRow::indexOf)
+                                                   .toArray();
             preparedJoins.add(new Join(join.getType(),
                                        join.getTable(),
                                        join,
@@ -200,6 +205,7 @@ public class QueryPlanner
                                        parameterIndexes,
                                        partitionParameterIndexes,
                                        clusteringParameterIndexes,
+                                       joinResultClusteringIdx,
                                        subSelect));
         }
         VariableSpecifications boundVariables = getBoundVariables(preparedJoins);

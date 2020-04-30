@@ -59,10 +59,8 @@ import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.index.IndexRegistry;
-import org.apache.cassandra.serializers.IntegerSerializer;
 import org.apache.cassandra.serializers.ListSerializer;
 import org.apache.cassandra.serializers.MarshalException;
-import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
@@ -80,6 +78,7 @@ import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 import org.apache.commons.lang3.tuple.Pair;
 
+import static java.util.Comparator.comparing;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNull;
@@ -318,64 +317,18 @@ public class SelectStatement implements CQLStatement
             }
             else
             {
-                result = result.buffer(options.getPageSize()).flatMapSequential(left -> {
+                result = result.buffer(options.getPageSize() == -1 ? 10000 : options.getPageSize()).flatMapSequential(leftBuffer -> {
 
-                    //Assign a sequence number to each row and then group by partition
-                    Map<ByteBuffer, List<Pair<Integer, List<ByteBuffer>>>> groupedByPartition = IntStream
-                                                                                     .range(0, left.size())
-                                                                                     .mapToObj(idx -> Pair.of(idx, left.get(idx)))
-                                                                                     .collect(Collectors.groupingBy(row -> row.getRight().get(join.getJoinParameterPartitionIdx()[0])));
+                    //What if we group queries by partition and use an IN clause for the clustering columns
+                    //This won't work in practice without breaking paging, but we can look at adding what we need to C* to make this happen.
+                    //We're just trying to get a sense of perf.
+                    //Assume one clustering column and one partition and group
+                    //Then map the results back to the expected results.
+                    //Use an ordered merge to construct the final resultset from the grouped partitions.
 
-                    List<Flux<List<Pair<Integer, List<ByteBuffer>>>>> results
-                    = groupedByPartition.entrySet().stream()
-                                        .map(r -> {
-                                            //Execute a query against each group.
-                                            //Populate the parameter array
-                                            List<ByteBuffer> clusteringColumnValues = r.getValue().stream().map(d -> d.getRight().get(join.getJoinParameterClusteringIdx()[0])).collect(Collectors.toList());
-                                            ArrayList<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
-                                            for (int parameterIdx : join.getJoinMapping())
-                                            {
-                                                ByteBuffer parameter;
-                                                if(parameterIdx == join.getJoinParameterClusteringIdx()[0]) {
-                                                    parameter = ByteBuffer.allocate(Integer.BYTES + clusteringColumnValues.stream().mapToInt(v->v.limit()).sum());
-                                                    parameter.putInt(clusteringColumnValues.size());
-                                                    clusteringColumnValues.forEach(parameter::put);
-                                                }
-                                                else
-                                                {
-                                                    parameter = r.getValue().get(0).getRight().get(parameterIdx);
-                                                }
-                                                params.add(parameter);
-                                            }
-
-                                            QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
-                                            return join.getSelect()
-                                                       .executeAsync(state, joinOptions, queryStartNanoTime, internal)
-                                                       .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
-                                                       .transform(f -> {
-                                                           switch (join.getType())
-                                                           {
-                                                               case Left:
-                                                                   //Left joins return an empty result if there is nothing
-                                                                   return f.defaultIfEmpty(join.getEmptyResult());
-                                                               case Right:
-                                                                   throw new IllegalStateException("Right join should have been converted to left");
-                                                               case Inner:
-                                                                   //Inner don't default if empty and are therefore filtered.
-                                                                   return f;
-                                                               default:
-                                                                   throw new IllegalStateException("Unknown join type " + join.getType());
-                                                           }
-                                                       })
-                                                       .map(right -> new Join.JoinResult(left, right))
-                                                       .subscribeOn(Schedulers.boundedElastic());
-
-
-
-                                            )
-                                        })
-                                        .collect(Collectors.toList());
-
+                    List<Flux<Pair<Integer, Join.JoinResult>>> subqueries = getSubqueries(state, options, queryStartNanoTime, internal, join, leftBuffer);
+                    Flux<Pair<Integer, Join.JoinResult>>[] fluxes = subqueries.toArray(new Flux[0]);
+                    return Flux.mergeOrdered(comparing(Pair::getLeft), fluxes).map(r->r.getRight());
                 });
             }
         }
@@ -391,6 +344,60 @@ public class SelectStatement implements CQLStatement
 
 
         return new ResultMessage.Rows(resultSetBuilder.build());
+    }
+
+    private List<Flux<Pair<Integer, Join.JoinResult>>> getSubqueries(QueryState state, QueryOptions options, long queryStartNanoTime, boolean internal, Join join, List<List<ByteBuffer>> leftBuffer)
+    {
+        Map<ByteBuffer, List<Pair<Integer, List<ByteBuffer>>>> groupedByPartition = IntStream
+                                                                                    .range(0, leftBuffer.size())
+                                                                                    .mapToObj(idx -> Pair.of(idx, leftBuffer.get(idx)))
+                                                                                    .collect(Collectors.groupingBy(row -> row.getRight().get(join.getJoinParameterPartitionIdx()[0])));
+        return groupedByPartition.entrySet().stream()
+                          .map(partitioned -> {
+                              //Execute a query against each group.
+                              List<ByteBuffer> params = getParameters(join, partitioned.getValue());
+                              QueryOptions joinOptions = QueryOptions.forJoinQuery(options, null, params);
+                              return join.getSelect()
+                                         .executeAsync(state, joinOptions, queryStartNanoTime, internal)
+                                         .transform(f -> expandAndFlatten(state, options, queryStartNanoTime, internal, f))
+                                         .collectList()//Break paging
+                                         .flatMapMany(right -> {
+                                             return Flux.fromStream(partitioned.getValue().stream().flatMap(left -> {
+                                                 List<List<ByteBuffer>> rows = findRows(left.getRight(), right, join);
+                                                 return rows.stream().map(row -> Pair.of(left.getLeft(), new Join.JoinResult(left.getRight(), row)));
+                                             }));
+                                         })
+                                         .subscribeOn(Schedulers.boundedElastic());
+                          }).collect(Collectors.toList());
+    }
+
+    private List<List<ByteBuffer>> findRows(List<ByteBuffer> left, List<List<ByteBuffer>> right, Join join)
+    {
+        int joinParameterClusteringIdx = join.getJoinParameterClusteringIdx()[0];
+        int joinResultClusteringIdx = join.getJoinResultClusteringIdx()[0] - left.size();
+        List<List<ByteBuffer>> collect = right.stream()
+                                              .filter(row -> left.get(joinParameterClusteringIdx)
+                                                                 .equals(row.get(joinResultClusteringIdx))).collect(Collectors.toList());
+        return collect;
+    }
+
+    private List<ByteBuffer> getParameters(Join join, List<Pair<Integer, List<ByteBuffer>>> rows)
+    {
+        List<ByteBuffer> clusteringColumnValues = rows.stream().map(d -> d.getRight().get(join.getJoinParameterClusteringIdx()[0])).collect(Collectors.toList());
+        List<ByteBuffer> params = new ArrayList<>(join.getJoinMapping().length);
+        for (int parameterIdx : join.getJoinMapping())
+        {
+            ByteBuffer parameter;
+            if(parameterIdx == join.getJoinParameterClusteringIdx()[0]) {
+                parameter = ListSerializer.pack(clusteringColumnValues, clusteringColumnValues.size(), ProtocolVersion.CURRENT);
+            }
+            else
+            {
+                parameter = rows.get(0).getRight().get(parameterIdx);
+            }
+            params.add(parameter);
+        }
+        return params;
     }
 
     private Flux<List<ByteBuffer>> expandAndFlatten(QueryState state,
