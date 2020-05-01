@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.selection;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
@@ -51,15 +52,16 @@ public abstract class Selector
          * Returns the column specification corresponding to the output value of the selector instances created by
          * this factory.
          *
-         * @param table the table meta data
+         * @param tableResolver the table meta data
          * @return a column specification
          */
-        public ColumnSpecification getColumnSpecification(TableMetadata table)
+        public ColumnSpecification getColumnSpecification(TableResolver tableResolver)
         {
+            TableMetadata table = tableResolver.primary();
             return new ColumnSpecification(table.keyspace,
                                            table.name,
                                            new ColumnIdentifier(getColumnName(), true), // note that the name is not necessarily
-                                                                                        // a true column name so we shouldn't intern it
+                                           // a true column name so we shouldn't intern it
                                            getReturnType());
         }
 

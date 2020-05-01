@@ -60,17 +60,26 @@ public class QueryPlannerTest
     {
         assertThat("SELECT * FROM ks.customers")
         .evaluatesToPlan()
-        .select("ks.customers").withSelectors("*")
+        .select("ks.customers").withSelectors("id", "id2", "id3", "a", "b", "c")
         .withNoOtherJoins();
     }
 
     @Test
     public void testInnerJoin()
     {
-
         assertThat("SELECT c.*, o.* FROM ks.customers c INNER JOIN ks.orders o ON o.customer_id = c.id ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers c").withSelectors("c.*", "c.id")
+        .select("ks.customers c").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id")
+        .innerJoin("ks.orders o", "o.customer_id = c.id").withWhere("o.customer_id = ?").withForignKeys("c.id")
+        .withNoOtherJoins();
+    }
+
+    @Test
+    public void testTerm()
+    {
+        assertThat("SELECT c.id + o.id AS sum FROM ks.customers c INNER JOIN ks.orders o ON o.customer_id = c.id ALLOW FILTERING")
+        .evaluatesToPlan()
+        .select("ks.customers c").withSelectors("c.id", "c.id")
         .innerJoin("ks.orders o", "o.customer_id = c.id").withWhere("o.customer_id = ?").withForignKeys("c.id")
         .withNoOtherJoins();
     }
@@ -80,7 +89,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT c.* FROM ks.customers c INNER JOIN ks.orders o ON o.customer_id = c.id INNER JOIN ks.employees e ON o.employee_id = e.id ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers c").withSelectors("c.*", "c.id")
+        .select("ks.customers c").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id")
         .innerJoin("ks.orders o", "o.customer_id = c.id").withSelectors("o.customer_id", "o.employee_id").withForignKeys("c.id")
         .innerJoin("ks.employees e", "o.employee_id = e.id").withSelectors("e.id").withForignKeys("o.employee_id")
         .withNoOtherJoins();
@@ -91,7 +100,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT c.* FROM ks.customers c INNER JOIN ks.orders o ON o.customer_id = c.id AND o.customer_id2 = c.id2 ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers c").withSelectors("c.*", "c.id", "c.id2")
+        .select("ks.customers c").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id", "c.id2")
         .innerJoin("ks.orders o", "o.customer_id = c.id AND o.customer_id2 = c.id2").withSelectors("o.customer_id", "o.customer_id2").withForignKeys("c.id", "c.id2")
         .withNoOtherJoins();
     }
@@ -101,7 +110,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT c.* FROM ks.customers c LEFT JOIN ks.orders o ON o.customer_id = c.id ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers c").withSelectors("c.*", "c.id")
+        .select("ks.customers c").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id")
         .leftJoin("ks.orders o", "o.customer_id = c.id").withSelectors("o.customer_id").withForignKeys("c.id")
         .withNoOtherJoins();
     }
@@ -112,7 +121,7 @@ public class QueryPlannerTest
         assertThat("SELECT c.* FROM ks.customers c RIGHT JOIN ks.orders o ON o.customer_id = c.id ALLOW FILTERING")
         .evaluatesToPlan()
         .select("ks.orders o").withSelectors("o.customer_id")
-        .leftJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.*", "c.id").withForignKeys("o.customer_id")
+        .leftJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withForignKeys("o.customer_id")
         .withNoOtherJoins();
     }
 
@@ -123,7 +132,7 @@ public class QueryPlannerTest
         .evaluatesToPlan()
         .select("ks.employees e").withSelectors("e.id")
         .leftJoin("ks.orders o", "o.employee_id = e.id").withSelectors("o.employee_id", "o.customer_id").withForignKeys("e.id")
-        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.*", "c.id").withForignKeys("o.customer_id")
+        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withForignKeys("o.customer_id")
         .withNoOtherJoins();
     }
 
@@ -134,7 +143,7 @@ public class QueryPlannerTest
         .evaluatesToPlan()
         .select("ks.employees e").withSelectors("e.id")
         .leftJoin("ks.orders o", "o.employee_id = e.id").withSelectors("o.employee_id", "o.customer_id").withForignKeys("e.id")
-        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.*", "c.id").withForignKeys("o.customer_id")
+        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withForignKeys("o.customer_id")
         .withNoOtherJoins();
     }
 
@@ -145,7 +154,7 @@ public class QueryPlannerTest
         .evaluatesToPlan()
         .select("ks.employees e").withSelectors("e.id")
         .leftJoin("ks.orders o", "o.employee_id = e.id").withSelectors("o.employee_id", "o.customer_id", "o.warehouse_id").withForignKeys("e.id")
-        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.*", "c.id").withForignKeys("o.customer_id")
+        .innerJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withForignKeys("o.customer_id")
         .leftJoin("ks.warehouses w", "o.warehouse_id = w.id").withSelectors("w.id").withForignKeys("o.warehouse_id")
         .withNoOtherJoins();
     }
@@ -157,7 +166,7 @@ public class QueryPlannerTest
         .evaluatesToPlan()
         .select("ks.employees e").withSelectors("e.id")
         .leftJoin("ks.orders o", "o.employee_id = e.id").withSelectors("o.employee_id", "o.customer_id", "o.warehouse_id").withForignKeys("e.id")
-        .leftJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.*", "c.id").withForignKeys("o.customer_id")
+        .leftJoin("ks.customers c", "o.customer_id = c.id").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withForignKeys("o.customer_id")
         .leftJoin("ks.warehouses w", "o.warehouse_id = w.id").withSelectors("w.id").withForignKeys("o.warehouse_id")
         .withNoOtherJoins();
     }
@@ -167,7 +176,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT * FROM ks.customers ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers").withSelectors("*")
+        .select("ks.customers").withSelectors("id", "id2", "id3", "a", "b", "c")
         .withNoOtherJoins();
     }
 
@@ -194,7 +203,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT * FROM ks.customers WHERE a = 1 ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers").withSelectors("*").withWhere("a = 1")
+        .select("ks.customers").withSelectors("id", "id2", "id3", "a", "b", "c").withWhere("a = 1")
         .withNoOtherJoins();
     }
 
@@ -203,7 +212,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT * FROM ks.customers WHERE a = 1 AND b = 2 ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers").withSelectors("*").withWhere("a = 1", "b = 2")
+        .select("ks.customers").withSelectors("id", "id2", "id3", "a", "b", "c").withWhere("a = 1", "b = 2")
         .withNoOtherJoins();
     }
 
@@ -212,7 +221,7 @@ public class QueryPlannerTest
     {
         assertThat("SELECT * FROM ks.customers WHERE (id2, id3) IN ? ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers").withSelectors("*").withWhere("(id2, id3) IN ?")
+        .select("ks.customers").withSelectors("id", "id2", "id3", "a", "b", "c").withWhere("(id2, id3) IN ?")
         .withNoOtherJoins();
     }
 
@@ -222,7 +231,7 @@ public class QueryPlannerTest
 
         assertThat("SELECT c.*, o.* FROM ks.customers c INNER JOIN ks.orders o ON o.customer_id = c.id WHERE c.a = 3 AND o.employee_id = 4 AND o.warehouse_id = ? ALLOW FILTERING")
         .evaluatesToPlan()
-        .select("ks.customers c").withSelectors("c.*", "c.id").withWhere("c.a = 3")
+        .select("ks.customers c").withSelectors("c.id", "c.id2", "c.id3", "c.a", "c.b", "c.c", "c.id").withWhere("c.a = 3")
         .innerJoin("ks.orders o", "o.customer_id = c.id").withWhere("o.customer_id = ?", "o.employee_id = 4", "o.warehouse_id = ?").withForignKeys("c.id")
         .withNoOtherJoins();
     }

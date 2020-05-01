@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.MultiColumnRaw;
@@ -134,21 +135,21 @@ public class MultiColumnRelation extends Relation
     }
 
     @Override
-    protected Restriction newEQRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newEQRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
-        List<ColumnMetadata> receivers = receivers(table);
-        Term term = toTerm(receivers, getValue(), table.keyspace, boundNames);
+        List<ColumnMetadata> receivers = receivers(tableResolver);
+        Term term = toTerm(receivers, getValue(), receivers.get(0).ksName, boundNames);
         return new MultiColumnRestriction.EQRestriction(receivers, term);
     }
 
     @Override
-    protected Restriction newINRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newINRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
-        List<ColumnMetadata> receivers = receivers(table);
-        List<Term> terms = toTerms(receivers, inValues, table.keyspace, boundNames);
+        List<ColumnMetadata> receivers = receivers(tableResolver);
+        List<Term> terms = toTerms(receivers, inValues, receivers.get(0).ksName, boundNames);
         if (terms == null)
         {
-            Term term = toTerm(receivers, getValue(), table.keyspace, boundNames);
+            Term term = toTerm(receivers, getValue(), receivers.get(0).ksName, boundNames);
             return new MultiColumnRestriction.InRestrictionWithMarker(receivers, (AbstractMarker) term);
         }
 
@@ -159,28 +160,28 @@ public class MultiColumnRelation extends Relation
     }
 
     @Override
-    protected Restriction newSliceRestriction(TableMetadata table, VariableSpecifications boundNames, Bound bound, boolean inclusive)
+    protected Restriction newSliceRestriction(TableResolver tableResolver, VariableSpecifications boundNames, Bound bound, boolean inclusive)
     {
-        List<ColumnMetadata> receivers = receivers(table);
-        Term term = toTerm(receivers(table), getValue(), table.keyspace, boundNames);
+        List<ColumnMetadata> receivers = receivers(tableResolver);
+        Term term = toTerm(receivers(tableResolver), getValue(), receivers.get(0).ksName, boundNames);
         return new MultiColumnRestriction.SliceRestriction(receivers, bound, inclusive, term);
     }
 
     @Override
-    protected Restriction newContainsRestriction(TableMetadata table, VariableSpecifications boundNames, boolean isKey)
+    protected Restriction newContainsRestriction(TableResolver tableResolver, VariableSpecifications boundNames, boolean isKey)
     {
         throw invalidRequest("%s cannot be used for multi-column relations", operator());
     }
 
     @Override
-    protected Restriction newIsNotRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newIsNotRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
         // this is currently disallowed by the grammar
         throw new AssertionError(String.format("%s cannot be used for multi-column relations", operator()));
     }
 
     @Override
-    protected Restriction newLikeRestriction(TableMetadata table, VariableSpecifications boundNames, Operator operator)
+    protected Restriction newLikeRestriction(TableResolver tableResolver, VariableSpecifications boundNames, Operator operator)
     {
         throw invalidRequest("%s cannot be used for multi-column relations", operator());
     }
@@ -196,14 +197,19 @@ public class MultiColumnRelation extends Relation
         return term;
     }
 
-    protected List<ColumnMetadata> receivers(TableMetadata table) throws InvalidRequestException
+    protected List<ColumnMetadata> receivers(TableResolver tableResolver) throws InvalidRequestException
     {
         List<ColumnMetadata> names = new ArrayList<>(getEntities().size());
         int previousPosition = -1;
         for (ColumnMetadata.Raw raw : getEntities())
         {
-            ColumnMetadata def = raw.prepare(table);
+            ColumnMetadata def = raw.prepare(tableResolver);
             checkTrue(def.isClusteringColumn(), "Multi-column relations can only be applied to clustering columns but was applied to: %s", def.name);
+            if(!names.isEmpty())
+            {
+                checkTrue(def.ksName.equals(names.get(0).ksName) && def.cfName.equals(names.get(0).cfName),
+                          "Multi-column relations can only be applied to a single table but was applied to: %s and %s", def.name, names.get(0));
+            }
             checkFalse(names.contains(def), "Column \"%s\" appeared twice in a relation: %s", def.name, this);
 
             // check that no clustering columns were skipped

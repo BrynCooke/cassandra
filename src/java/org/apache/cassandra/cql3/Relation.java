@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.cql3.restrictions.Restriction;
@@ -132,30 +133,30 @@ public abstract class Relation
     /**
      * Converts this <code>Relation</code> into a <code>Restriction</code>.
      *
-     * @param table the Column Family meta data
+     * @param tableResolver the Column Family meta data
      * @param boundNames the variables specification where to collect the bind variables
      * @return the <code>Restriction</code> corresponding to this <code>Relation</code>
      * @throws InvalidRequestException if this <code>Relation</code> is not valid
      */
-    public final Restriction toRestriction(TableMetadata table, VariableSpecifications boundNames)
+    public final Restriction toRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
         switch (relationType)
         {
-            case EQ: return newEQRestriction(table, boundNames);
-            case LT: return newSliceRestriction(table, boundNames, Bound.END, false);
-            case LTE: return newSliceRestriction(table, boundNames, Bound.END, true);
-            case GTE: return newSliceRestriction(table, boundNames, Bound.START, true);
-            case GT: return newSliceRestriction(table, boundNames, Bound.START, false);
-            case IN: return newINRestriction(table, boundNames);
-            case CONTAINS: return newContainsRestriction(table, boundNames, false);
-            case CONTAINS_KEY: return newContainsRestriction(table, boundNames, true);
-            case IS_NOT: return newIsNotRestriction(table, boundNames);
+            case EQ: return newEQRestriction(tableResolver, boundNames);
+            case LT: return newSliceRestriction(tableResolver, boundNames, Bound.END, false);
+            case LTE: return newSliceRestriction(tableResolver, boundNames, Bound.END, true);
+            case GTE: return newSliceRestriction(tableResolver, boundNames, Bound.START, true);
+            case GT: return newSliceRestriction(tableResolver, boundNames, Bound.START, false);
+            case IN: return newINRestriction(tableResolver, boundNames);
+            case CONTAINS: return newContainsRestriction(tableResolver, boundNames, false);
+            case CONTAINS_KEY: return newContainsRestriction(tableResolver, boundNames, true);
+            case IS_NOT: return newIsNotRestriction(tableResolver, boundNames);
             case LIKE_PREFIX:
             case LIKE_SUFFIX:
             case LIKE_CONTAINS:
             case LIKE_MATCHES:
             case LIKE:
-                return newLikeRestriction(table, boundNames, relationType);
+                return newLikeRestriction(tableResolver, boundNames, relationType);
             default: throw invalidRequest("Unsupported \"!=\" relation: %s", this);
         }
     }
@@ -163,34 +164,34 @@ public abstract class Relation
     /**
      * Creates a new EQ restriction instance.
      *
-     * @param table the table meta data
+     * @param tableResolver the table meta data
      * @param boundNames the variables specification where to collect the bind variables
      * @return a new EQ restriction instance.
      * @throws InvalidRequestException if the relation cannot be converted into an EQ restriction.
      */
-    protected abstract Restriction newEQRestriction(TableMetadata table, VariableSpecifications boundNames);
+    protected abstract Restriction newEQRestriction(TableResolver tableResolver, VariableSpecifications boundNames);
 
     /**
      * Creates a new IN restriction instance.
      *
-     * @param table the table meta data
+     * @param tableResolver the table meta data
      * @param boundNames the variables specification where to collect the bind variables
      * @return a new IN restriction instance
      * @throws InvalidRequestException if the relation cannot be converted into an IN restriction.
      */
-    protected abstract Restriction newINRestriction(TableMetadata table, VariableSpecifications boundNames);
+    protected abstract Restriction newINRestriction(TableResolver tableResolver, VariableSpecifications boundNames);
 
     /**
      * Creates a new Slice restriction instance.
      *
-     * @param table the table meta data
+     * @param tableResolver the table meta data
      * @param boundNames the variables specification where to collect the bind variables
      * @param bound the slice bound
      * @param inclusive <code>true</code> if the bound is included.
      * @return a new slice restriction instance
      * @throws InvalidRequestException if the <code>Relation</code> is not valid
      */
-    protected abstract Restriction newSliceRestriction(TableMetadata table,
+    protected abstract Restriction newSliceRestriction(TableResolver tableResolver,
                                                        VariableSpecifications boundNames,
                                                        Bound bound,
                                                        boolean inclusive);
@@ -198,17 +199,17 @@ public abstract class Relation
     /**
      * Creates a new Contains restriction instance.
      *
-     * @param table the table meta data
+     * @param tableResolver the table meta data
      * @param boundNames the variables specification where to collect the bind variables
      * @param isKey <code>true</code> if the restriction to create is a CONTAINS KEY
      * @return a new Contains <code>Restriction</code> instance
      * @throws InvalidRequestException if the <code>Relation</code> is not valid
      */
-    protected abstract Restriction newContainsRestriction(TableMetadata table, VariableSpecifications boundNames, boolean isKey);
+    protected abstract Restriction newContainsRestriction(TableResolver tableResolver, VariableSpecifications boundNames, boolean isKey);
 
-    protected abstract Restriction newIsNotRestriction(TableMetadata table, VariableSpecifications boundNames);
+    protected abstract Restriction newIsNotRestriction(TableResolver tableResolver, VariableSpecifications boundNames);
 
-    protected abstract Restriction newLikeRestriction(TableMetadata table, VariableSpecifications boundNames, Operator operator);
+    protected abstract Restriction newLikeRestriction(TableResolver tableResolver, VariableSpecifications boundNames, Operator operator);
 
     /**
      * Converts the specified <code>Raw</code> into a <code>Term</code>.

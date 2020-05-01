@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.selection;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;

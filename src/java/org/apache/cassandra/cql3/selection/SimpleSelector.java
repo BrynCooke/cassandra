@@ -19,6 +19,8 @@ package org.apache.cassandra.cql3.selection;
 
 import java.nio.ByteBuffer;
 
+import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.QueryOptions;
@@ -93,6 +95,15 @@ public final class SimpleSelector extends Selector
         public ColumnMetadata getColumn()
         {
             return column;
+        }
+
+        public ColumnSpecification getColumnSpecification(TableResolver tableResolver)
+        {
+            return new ColumnSpecification(column.ksName,
+                                           column.cfName,
+                                           new ColumnIdentifier(getColumnName(), true), // note that the name is not necessarily
+                                           // a true column name so we shouldn't intern it
+                                           getReturnType());
         }
     }
 

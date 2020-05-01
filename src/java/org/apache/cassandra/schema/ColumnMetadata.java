@@ -29,6 +29,7 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.selection.Selector;
 import org.apache.cassandra.cql3.selection.SimpleSelector;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -469,7 +470,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
         return type.isCounter();
     }
 
-    public Selector.Factory newSelectorFactory(TableMetadata table, AbstractType<?> expectedType, List<ColumnMetadata> defs, VariableSpecifications boundNames) throws InvalidRequestException
+    public Selector.Factory newSelectorFactory(TableResolver tableResolver, AbstractType<?> expectedType, List<ColumnMetadata> defs, VariableSpecifications boundNames) throws InvalidRequestException
     {
         return SimpleSelector.newFactory(this, addAndGetIndex(this, defs));
     }
@@ -540,7 +541,7 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
         public abstract ColumnIdentifier getTableAlias();
 
         @Override
-        public abstract ColumnMetadata prepare(TableMetadata table);
+        public abstract ColumnMetadata prepare(TableResolver tableResolver);
 
         @Override
         public final int hashCode()
@@ -589,8 +590,11 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
                 return ColumnIdentifier.getInterned(columnNameType, columnNameType.fromString(text), text);
             }
 
-            public ColumnMetadata prepare(TableMetadata table)
+            public ColumnMetadata prepare(TableResolver tableResolver)
             {
+                TableMetadata table = tableResolver.resolveTableMetadata(tableAlias);
+                if (table == null)
+                    throw new InvalidRequestException(String.format("Undefined table alias %s", tableAlias));
                 if (!table.isStaticCompactTable())
                     return find(table);
 
@@ -662,8 +666,9 @@ public final class ColumnMetadata extends ColumnSpecification implements Selecta
                 return column.name;
             }
 
-            public ColumnMetadata prepare(TableMetadata table)
+            public ColumnMetadata prepare(TableResolver tableResolver)
             {
+                TableMetadata table = tableResolver.resolveTableMetadata(column);
                 assert table.getColumn(column.name) != null; // Sanity check that we're not doing something crazy
                 return column;
             }

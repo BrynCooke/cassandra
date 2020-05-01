@@ -22,8 +22,10 @@ import java.util.function.Predicate;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
+import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.VariableSpecifications;
 import org.apache.cassandra.cql3.selection.Selector.Factory;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
@@ -56,13 +58,13 @@ final class AliasedSelectable implements Selectable
     }
 
     @Override
-    public Factory newSelectorFactory(TableMetadata table,
+    public Factory newSelectorFactory(TableResolver tableResolver,
                                       AbstractType<?> expectedType,
                                       List<ColumnMetadata> defs,
                                       VariableSpecifications boundNames)
     {
-        final Factory delegate = selectable.newSelectorFactory(table, expectedType, defs, boundNames);
-        final ColumnSpecification columnSpec = delegate.getColumnSpecification(table).withAlias(alias);
+        final Factory delegate = selectable.newSelectorFactory(tableResolver, expectedType, defs, boundNames);
+        final ColumnSpecification columnSpec = delegate.getColumnSpecification(tableResolver).withAlias(alias);
 
         return new ForwardingFactory()
         {
@@ -73,7 +75,7 @@ final class AliasedSelectable implements Selectable
             }
 
             @Override
-            public ColumnSpecification getColumnSpecification(TableMetadata table)
+            public ColumnSpecification getColumnSpecification(TableResolver table)
             {
                 return columnSpec;
             }

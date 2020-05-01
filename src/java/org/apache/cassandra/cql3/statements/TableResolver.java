@@ -18,12 +18,15 @@
 
 package org.apache.cassandra.cql3.statements;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
+import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -35,12 +38,13 @@ import org.apache.cassandra.schema.TableMetadata;
  */
 public class TableResolver
 {
+    private final TableMetadata primary;
     private Map<ColumnIdentifier, QualifiedName> tables;
     private Schema schema = Schema.instance;
 
     public TableResolver(QualifiedName primary, List<Join.Raw> joinClauses)
     {
-
+        this.primary = schema.getTableMetadata(primary.getKeyspace(), primary.getName());
         this.tables = new HashMap<>(joinClauses.size() + 1);
         tables.put(primary.getAlias(), primary);
         for (Join.Raw join : joinClauses)
@@ -56,6 +60,20 @@ public class TableResolver
                               previous.getName()));
             }
         }
+    }
+
+    public static TableResolver forPrimary(QualifiedName qualifiedName)
+    {
+        return new TableResolver(qualifiedName, Collections.emptyList());
+    }
+
+    public static TableResolver forPrimary(TableMetadata table)
+    {
+        return new TableResolver(new QualifiedName(table.keyspace, table.name), Collections.emptyList());
+    }
+
+    public TableMetadata primary() {
+        return primary;
     }
 
     public QualifiedName resolveTable(ColumnIdentifier alias)
@@ -94,5 +112,18 @@ public class TableResolver
             return resolveColumn((Selectable.RawIdentifier) selectable);
         }
         throw new UnsupportedOperationException("Cannot resolve selectable of type " + selectable.getClass());
+    }
+
+
+    public List<TableMetadata> allTableMetadata()
+    {
+        return tables.values().stream()
+                     .map(t->schema.getTableMetadata(t.getKeyspace(), t.getName()))
+                     .collect(Collectors.toList());
+    }
+
+    public TableMetadata resolveTableMetadata(ColumnMetadata column)
+    {
+        return schema.getTableMetadata(column.ksName, column.cfName);
     }
 }

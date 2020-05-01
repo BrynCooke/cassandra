@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -49,7 +50,7 @@ public class RawSelector
      * @param raws the <code>RawSelector</code>s to converts.
      * @return a list of <code>Selectable</code>s
      */
-    public static List<Selectable> toSelectables(List<RawSelector> raws, final TableMetadata table)
+    public static List<Selectable> toSelectables(List<RawSelector> raws, final TableResolver tableResolver)
     {
         return raws.stream()
                    .flatMap(raw -> {
@@ -57,6 +58,7 @@ public class RawSelector
                            && ((Selectable.RawIdentifier) raw.selectable).isWildCard())
                        {
                            Selectable.RawIdentifier selectable = (Selectable.RawIdentifier) raw.selectable;
+                           TableMetadata table = tableResolver.resolveTableMetadata(selectable.getTableAlias());
                            ArrayList<ColumnMetadata> columnMetadata = Lists.newArrayList(table.allColumnsInSelectOrder());
                            return columnMetadata.stream().map(c -> new RawSelector(forQuoted(c.name.toString(), selectable.getTableAlias()), null));
                        }
@@ -65,13 +67,13 @@ public class RawSelector
                            return Stream.of(raw);
                        }
                    })
-                   .map(s -> s.prepare(table))
+                   .map(s -> s.prepare(tableResolver))
                    .collect(Collectors.toList());
     }
 
-    private Selectable prepare(TableMetadata table)
+    private Selectable prepare(TableResolver tableResolver)
     {
-        Selectable s = selectable.prepare(table);
+        Selectable s = selectable.prepare(tableResolver);
         return alias != null ? new AliasedSelectable(s, alias) : s;
     }
 }

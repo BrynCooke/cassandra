@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.Raw;
@@ -178,29 +179,29 @@ public final class SingleColumnRelation extends Relation
     }
 
     @Override
-    protected Restriction newEQRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newEQRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
         if (mapKey == null)
         {
-            Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
+            Term term = toTerm(toReceivers(columnDef), value, columnDef.ksName, boundNames);
             return new SingleColumnRestriction.EQRestriction(columnDef, term);
         }
         List<? extends ColumnSpecification> receivers = toReceivers(columnDef);
-        Term entryKey = toTerm(Collections.singletonList(receivers.get(0)), mapKey, table.keyspace, boundNames);
-        Term entryValue = toTerm(Collections.singletonList(receivers.get(1)), value, table.keyspace, boundNames);
+        Term entryKey = toTerm(Collections.singletonList(receivers.get(0)), mapKey, columnDef.ksName, boundNames);
+        Term entryValue = toTerm(Collections.singletonList(receivers.get(1)), value, columnDef.ksName, boundNames);
         return new SingleColumnRestriction.ContainsRestriction(columnDef, entryKey, entryValue);
     }
 
     @Override
-    protected Restriction newINRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newINRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
         List<? extends ColumnSpecification> receivers = toReceivers(columnDef);
-        List<Term> terms = toTerms(receivers, inValues, table.keyspace, boundNames);
+        List<Term> terms = toTerms(receivers, inValues, columnDef.ksName, boundNames);
         if (terms == null)
         {
-            Term term = toTerm(receivers, value, table.keyspace, boundNames);
+            Term term = toTerm(receivers, value, columnDef.ksName, boundNames);
             return new SingleColumnRestriction.InRestrictionWithMarker(columnDef, (Lists.Marker) term);
         }
 
@@ -212,12 +213,12 @@ public final class SingleColumnRelation extends Relation
     }
 
     @Override
-    protected Restriction newSliceRestriction(TableMetadata table,
+    protected Restriction newSliceRestriction(TableResolver tableResolver,
                                               VariableSpecifications boundNames,
                                               Bound bound,
                                               boolean inclusive)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
 
         if (columnDef.type.referencesDuration())
         {
@@ -227,38 +228,38 @@ public final class SingleColumnRelation extends Relation
             throw invalidRequest("Slice restrictions are not supported on duration columns");
         }
 
-        Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
+        Term term = toTerm(toReceivers(columnDef), value, columnDef.ksName, boundNames);
         return new SingleColumnRestriction.SliceRestriction(columnDef, bound, inclusive, term);
     }
 
     @Override
-    protected Restriction newContainsRestriction(TableMetadata table,
+    protected Restriction newContainsRestriction(TableResolver tableResolver,
                                                  VariableSpecifications boundNames,
                                                  boolean isKey) throws InvalidRequestException
     {
-        ColumnMetadata columnDef = entity.prepare(table);
-        Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
+        Term term = toTerm(toReceivers(columnDef), value, columnDef.ksName, boundNames);
         return new SingleColumnRestriction.ContainsRestriction(columnDef, term, isKey);
     }
 
     @Override
-    protected Restriction newIsNotRestriction(TableMetadata table,
+    protected Restriction newIsNotRestriction(TableResolver tableResolver,
                                               VariableSpecifications boundNames) throws InvalidRequestException
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
         // currently enforced by the grammar
         assert value == Constants.NULL_LITERAL : "Expected null literal for IS NOT relation: " + this.toString();
         return new SingleColumnRestriction.IsNotNullRestriction(columnDef);
     }
 
     @Override
-    protected Restriction newLikeRestriction(TableMetadata table, VariableSpecifications boundNames, Operator operator)
+    protected Restriction newLikeRestriction(TableResolver tableResolver, VariableSpecifications boundNames, Operator operator)
     {
         if (mapKey != null)
             throw invalidRequest("%s can't be used with collections.", operator());
 
-        ColumnMetadata columnDef = entity.prepare(table);
-        Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
+        ColumnMetadata columnDef = entity.prepare(tableResolver);
+        Term term = toTerm(toReceivers(columnDef), value, columnDef.ksName, boundNames);
 
         return new SingleColumnRestriction.LikeRestriction(columnDef, operator, term);
     }

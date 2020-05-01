@@ -26,6 +26,7 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.cql3.statements.Bound;
 import org.apache.cassandra.cql3.statements.StatementType;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.RowFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -61,7 +62,7 @@ public final class StatementRestrictions
     /**
      * The Column Family meta data
      */
-    public final TableMetadata table;
+    public final TableResolver tableResolver;
 
     /**
      * Restrictions on partitioning columns
@@ -108,30 +109,30 @@ public final class StatementRestrictions
      * @param table the column family meta data
      * @return a new empty <code>StatementRestrictions</code>.
      */
-    public static StatementRestrictions empty(StatementType type, TableMetadata table)
+    public static StatementRestrictions empty(StatementType type, TableResolver tableResolver)
     {
-        return new StatementRestrictions(type, table, false);
+        return new StatementRestrictions(type, tableResolver, false);
     }
 
-    private StatementRestrictions(StatementType type, TableMetadata table, boolean allowFiltering)
+    private StatementRestrictions(StatementType type, TableResolver tableResolver, boolean allowFiltering)
     {
         this.type = type;
-        this.table = table;
-        this.partitionKeyRestrictions = new PartitionKeySingleRestrictionSet(table.partitionKeyAsClusteringComparator());
-        this.clusteringColumnsRestrictions = new ClusteringColumnRestrictions(table, allowFiltering);
+        this.tableResolver = tableResolver;
+        this.partitionKeyRestrictions = new PartitionKeySingleRestrictionSet(tableResolver.primary().partitionKeyAsClusteringComparator());
+        this.clusteringColumnsRestrictions = new ClusteringColumnRestrictions(tableResolver.primary(), allowFiltering);
         this.nonPrimaryKeyRestrictions = new RestrictionSet();
         this.notNullColumns = new HashSet<>();
     }
 
     public StatementRestrictions(StatementType type,
-                                 TableMetadata table,
+                                 TableResolver tableResolver,
                                  WhereClause whereClause,
                                  VariableSpecifications boundNames,
                                  boolean selectsOnlyStaticColumns,
                                  boolean allowFiltering,
                                  boolean forView)
     {
-        this(type, table, whereClause, boundNames, selectsOnlyStaticColumns, type.allowUseOfSecondaryIndices(), allowFiltering, forView);
+        this(type, tableResolver, whereClause, boundNames, selectsOnlyStaticColumns, type.allowUseOfSecondaryIndices(), allowFiltering, forView);
     }
 
     /*
@@ -139,7 +140,7 @@ public final class StatementRestrictions
      * to avoid initing the Keyspace and SecondaryIndexManager.
      */
     public StatementRestrictions(StatementType type,
-                                 TableMetadata table,
+                                 TableResolver tableResolver,
                                  WhereClause whereClause,
                                  VariableSpecifications boundNames,
                                  boolean selectsOnlyStaticColumns,
@@ -147,11 +148,11 @@ public final class StatementRestrictions
                                  boolean allowFiltering,
                                  boolean forView)
     {
-        this(type, table, allowFiltering);
+        this(type, tableResolver, allowFiltering);
 
         IndexRegistry indexRegistry = null;
         if (type.allowUseOfSecondaryIndices())
-            indexRegistry = IndexRegistry.obtain(table);
+            indexRegistry = IndexRegistry.obtain(tableResolver.primary());
 
         /*
          * WHERE clause. For a given entity, rules are:
@@ -169,11 +170,11 @@ public final class StatementRestrictions
                 if (!forView)
                     throw new InvalidRequestException("Unsupported restriction: " + relation);
 
-                this.notNullColumns.addAll(relation.toRestriction(table, boundNames).getColumnDefs());
+                this.notNullColumns.addAll(relation.toRestriction(tableResolver, boundNames).getColumnDefs());
             }
             else if (relation.isLIKE())
             {
-                Restriction restriction = relation.toRestriction(table, boundNames);
+                Restriction restriction = relation.toRestriction(tableResolver, boundNames);
 
                 if (!type.allowUseOfSecondaryIndices() || !restriction.hasSupportingIndex(indexRegistry))
                     throw new InvalidRequestException(String.format("LIKE restriction is only supported on properly " +
@@ -184,7 +185,7 @@ public final class StatementRestrictions
             }
             else
             {
-                addRestriction(relation.toRestriction(table, boundNames));
+                addRestriction(relation.toRestriction(tableResolver, boundNames));
             }
         }
 
@@ -210,7 +211,7 @@ public final class StatementRestrictions
 
         // Some but not all of the partition key columns have been specified;
         // hence we need turn these restrictions into a row filter.
-        if (usesSecondaryIndexing || partitionKeyRestrictions.needFiltering(table))
+        if (usesSecondaryIndexing || partitionKeyRestrictions.needFiltering(tableResolver.primary()))
             filterRestrictions.add(partitionKeyRestrictions);
 
         if (selectsOnlyStaticColumns && hasClusteringColumnsRestrictions())
@@ -407,7 +408,7 @@ public final class StatementRestrictions
             checkFalse(partitionKeyRestrictions.isOnToken(),
                        "The token function cannot be used in WHERE clauses for %s statements", type);
 
-            if (partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(table))
+            if (partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(tableResolver.primary()))
                 throw invalidRequest("Some partition key parts are missing: %s",
                                      Joiner.on(", ").join(getPartitionKeyUnrestrictedComponents()));
 
@@ -422,7 +423,7 @@ public final class StatementRestrictions
             if (partitionKeyRestrictions.isOnToken())
                 isKeyRange = true;
 
-            if (partitionKeyRestrictions.isEmpty() && partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(table))
+            if (partitionKeyRestrictions.isEmpty() && partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(tableResolver.primary()))
             {
                 isKeyRange = true;
                 usesSecondaryIndexing = hasQueriableIndex;
@@ -434,7 +435,7 @@ public final class StatementRestrictions
             // - Is it queriable without 2ndary index, which is always more efficient
             // If a component of the partition key is restricted by a relation, all preceding
             // components must have a EQ. Only the last partition key component can be in IN relation.
-            if (partitionKeyRestrictions.needFiltering(table))
+            if (partitionKeyRestrictions.needFiltering(tableResolver.primary()))
             {
                 if (!allowFiltering && !forView && !hasQueriableIndex)
                     throw new InvalidRequestException(REQUIRES_ALLOW_FILTERING_MESSAGE);
@@ -468,7 +469,7 @@ public final class StatementRestrictions
      */
     private Collection<ColumnIdentifier> getPartitionKeyUnrestrictedComponents()
     {
-        List<ColumnMetadata> list = new ArrayList<>(table.partitionKeyColumns());
+        List<ColumnMetadata> list = new ArrayList<>(tableResolver.primary().partitionKeyColumns());
         list.removeAll(partitionKeyRestrictions.getColumnDefs());
         return ColumnMetadata.toIdentifiers(list);
     }
@@ -511,7 +512,7 @@ public final class StatementRestrictions
                    "Slice restrictions are not supported on the clustering columns in %s statements", type);
 
         if (!type.allowClusteringColumnSlices()
-               && (!table.isCompactTable() || (table.isCompactTable() && !hasClusteringColumnsRestrictions())))
+               && (!tableResolver.primary().isCompactTable() || (tableResolver.primary().isCompactTable() && !hasClusteringColumnsRestrictions())))
         {
             if (!selectsOnlyStaticColumns && hasUnrestrictedClusteringColumns())
                 throw invalidRequest("Some clustering keys are missing: %s",
@@ -530,7 +531,7 @@ public final class StatementRestrictions
                 }
                 else if (!allowFiltering)
                 {
-                    List<ColumnMetadata> clusteringColumns = table.clusteringColumns();
+                    List<ColumnMetadata> clusteringColumns = tableResolver.primary().clusteringColumns();
                     List<ColumnMetadata> restrictedColumns = new LinkedList<>(clusteringColumnsRestrictions.getColumnDefs());
 
                     for (int i = 0, m = restrictedColumns.size(); i < m; i++)
@@ -558,7 +559,7 @@ public final class StatementRestrictions
      */
     private Collection<ColumnIdentifier> getUnrestrictedClusteringColumns()
     {
-        List<ColumnMetadata> missingClusteringColumns = new ArrayList<>(table.clusteringColumns());
+        List<ColumnMetadata> missingClusteringColumns = new ArrayList<>(tableResolver.primary().clusteringColumns());
         missingClusteringColumns.removeAll(new LinkedList<>(clusteringColumnsRestrictions.getColumnDefs()));
         return ColumnMetadata.toIdentifiers(missingClusteringColumns);
     }
@@ -569,7 +570,7 @@ public final class StatementRestrictions
      */
     private boolean hasUnrestrictedClusteringColumns()
     {
-        return table.clusteringColumns().size() != clusteringColumnsRestrictions.size();
+        return tableResolver.primary().clusteringColumns().size() != clusteringColumnsRestrictions.size();
     }
 
     private void processCustomIndexExpressions(List<CustomIndexExpression> expressions,
@@ -583,13 +584,13 @@ public final class StatementRestrictions
 
         QualifiedName name = expression.targetIndex;
 
-        if (name.hasKeyspace() && !name.getKeyspace().equals(table.keyspace))
-            throw IndexRestrictions.invalidIndex(expression.targetIndex, table);
+        if (name.hasKeyspace() && !name.getKeyspace().equals(tableResolver.primary().keyspace))
+            throw IndexRestrictions.invalidIndex(expression.targetIndex, tableResolver.primary());
 
-        if (!table.indexes.has(expression.targetIndex.getName()))
-            throw IndexRestrictions.indexNotFound(expression.targetIndex, table);
+        if (!tableResolver.primary().indexes.has(expression.targetIndex.getName()))
+            throw IndexRestrictions.indexNotFound(expression.targetIndex, tableResolver.primary());
 
-        Index index = indexRegistry.getIndex(table.indexes.get(expression.targetIndex.getName()).get());
+        Index index = indexRegistry.getIndex(tableResolver.primary().indexes.get(expression.targetIndex.getName()).get());
         if (!index.getIndexMetadata().isCustom())
             throw IndexRestrictions.nonCustomIndexInExpression(expression.targetIndex);
 
@@ -597,7 +598,7 @@ public final class StatementRestrictions
         if (expressionType == null)
             throw IndexRestrictions.customExpressionNotSupported(expression.targetIndex);
 
-        expression.prepareValue(table, expressionType, boundNames);
+        expression.prepareValue(tableResolver.primary(), expressionType, boundNames);
 
         filterRestrictions.add(expression);
     }
@@ -612,7 +613,7 @@ public final class StatementRestrictions
             restrictions.addRowFilterTo(filter, indexRegistry, options);
 
         for (CustomIndexExpression expression : filterRestrictions.getCustomIndexExpressions())
-            expression.addToRowFilter(filter, table, options);
+            expression.addToRowFilter(filter, tableResolver.primary(), options);
 
         return filter;
     }
@@ -649,7 +650,7 @@ public final class StatementRestrictions
      */
     public AbstractBounds<PartitionPosition> getPartitionKeyBounds(QueryOptions options)
     {
-        IPartitioner p = table.partitioner;
+        IPartitioner p = tableResolver.primary().partitioner;
 
         if (partitionKeyRestrictions.isOnToken())
         {
@@ -664,7 +665,7 @@ public final class StatementRestrictions
     {
         // Deal with unrestricted partition key components (special-casing is required to deal with 2i queries on the
         // first component of a composite partition key) queries that filter on the partition key.
-        if (partitionKeyRestrictions.needFiltering(table))
+        if (partitionKeyRestrictions.needFiltering(tableResolver.primary()))
             return new Range<>(p.getMinimumToken().minKeyBound(), p.getMinimumToken().maxKeyBound());
 
         ByteBuffer startKeyBytes = getPartitionKeyBound(Bound.START, options);
@@ -750,8 +751,8 @@ public final class StatementRestrictions
         // If this is a names command and the table is a static compact one, then as far as CQL is concerned we have
         // only a single row which internally correspond to the static parts. In which case we want to return an empty
         // set (since that's what ClusteringIndexNamesFilter expects).
-        if (table.isStaticCompactTable())
-            return BTreeSet.empty(table.comparator);
+        if (tableResolver.primary().isStaticCompactTable())
+            return BTreeSet.empty(tableResolver.primary().comparator);
 
         return clusteringColumnsRestrictions.valuesAsClustering(options);
     }
@@ -778,7 +779,7 @@ public final class StatementRestrictions
         // For static compact tables we want to ignore the fake clustering column (note that if we weren't special casing,
         // this would mean a 'SELECT *' on a static compact table would query whole partitions, even though we'll only return
         // the static part as far as CQL is concerned. This is thus mostly an optimization to use the query-by-name path).
-        int numberOfClusteringColumns = table.isStaticCompactTable() ? 0 : table.clusteringColumns().size();
+        int numberOfClusteringColumns = tableResolver.primary().isStaticCompactTable() ? 0 : tableResolver.primary().clusteringColumns().size();
         // it is a range query if it has at least one the column alias for which no relation is defined or is not EQ or IN.
         return clusteringColumnsRestrictions.size() < numberOfClusteringColumns
             || !clusteringColumnsRestrictions.hasOnlyEqualityRestrictions();
@@ -820,7 +821,7 @@ public final class StatementRestrictions
     public boolean hasAllPKColumnsRestrictedByEqualities()
     {
         return !isPartitionKeyRestrictionsOnToken()
-                && !partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(table)
+                && !partitionKeyRestrictions.hasUnrestrictedPartitionKeyComponents(tableResolver.primary())
                 && (partitionKeyRestrictions.hasOnlyEqualityRestrictions())
                 && !hasUnrestrictedClusteringColumns()
                 && (clusteringColumnsRestrictions.hasOnlyEqualityRestrictions());

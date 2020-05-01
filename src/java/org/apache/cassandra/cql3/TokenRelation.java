@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 
 import com.google.common.base.Joiner;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.Raw;
@@ -76,44 +77,44 @@ public final class TokenRelation extends Relation
     }
 
     @Override
-    protected Restriction newEQRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newEQRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
-        List<ColumnMetadata> columnDefs = getColumnDefinitions(table);
-        Term term = toTerm(toReceivers(table, columnDefs), value, table.keyspace, boundNames);
-        return new TokenRestriction.EQRestriction(table, columnDefs, term);
+        List<ColumnMetadata> columnDefs = getColumnDefinitions(tableResolver);
+        Term term = toTerm(toReceivers(tableResolver, columnDefs), value, columnDefs.get(0).ksName, boundNames);
+        return new TokenRestriction.EQRestriction(tableResolver.resolveTableMetadata(columnDefs.get(0)), columnDefs, term);
     }
 
     @Override
-    protected Restriction newINRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newINRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
         throw invalidRequest("%s cannot be used with the token function", operator());
     }
 
     @Override
-    protected Restriction newSliceRestriction(TableMetadata table,
+    protected Restriction newSliceRestriction(TableResolver tableResolver,
                                               VariableSpecifications boundNames,
                                               Bound bound,
                                               boolean inclusive)
     {
-        List<ColumnMetadata> columnDefs = getColumnDefinitions(table);
-        Term term = toTerm(toReceivers(table, columnDefs), value, table.keyspace, boundNames);
-        return new TokenRestriction.SliceRestriction(table, columnDefs, bound, inclusive, term);
+        List<ColumnMetadata> columnDefs = getColumnDefinitions(tableResolver);
+        Term term = toTerm(toReceivers(tableResolver, columnDefs), value, columnDefs.get(0).ksName, boundNames);
+        return new TokenRestriction.SliceRestriction(tableResolver.resolveTableMetadata(columnDefs.get(0)), columnDefs, bound, inclusive, term);
     }
 
     @Override
-    protected Restriction newContainsRestriction(TableMetadata table, VariableSpecifications boundNames, boolean isKey)
+    protected Restriction newContainsRestriction(TableResolver tableResolver, VariableSpecifications boundNames, boolean isKey)
     {
         throw invalidRequest("%s cannot be used with the token function", operator());
     }
 
     @Override
-    protected Restriction newIsNotRestriction(TableMetadata table, VariableSpecifications boundNames)
+    protected Restriction newIsNotRestriction(TableResolver tableResolver, VariableSpecifications boundNames)
     {
         throw invalidRequest("%s cannot be used with the token function", operator());
     }
 
     @Override
-    protected Restriction newLikeRestriction(TableMetadata table, VariableSpecifications boundNames, Operator operator)
+    protected Restriction newLikeRestriction(TableResolver tableResolver, VariableSpecifications boundNames, Operator operator)
     {
         throw invalidRequest("%s cannot be used with the token function", operator);
     }
@@ -166,31 +167,31 @@ public final class TokenRelation extends Relation
     /**
      * Returns the definition of the columns to which apply the token restriction.
      *
-     * @param table the table metadata
+     * @param tableResolver the table metadata
      * @return the definition of the columns to which apply the token restriction.
      * @throws InvalidRequestException if the entity cannot be resolved
      */
-    private List<ColumnMetadata> getColumnDefinitions(TableMetadata table)
+    private List<ColumnMetadata> getColumnDefinitions(TableResolver tableResolver)
     {
         List<ColumnMetadata> columnDefs = new ArrayList<>(entities.size());
         for ( ColumnMetadata.Raw raw : entities)
-            columnDefs.add(raw.prepare(table));
+            columnDefs.add(raw.prepare(tableResolver));
         return columnDefs;
     }
 
     /**
      * Returns the receivers for this relation.
      *
-     * @param table the table meta data
+     * @param tableResolver the table meta data
      * @param columnDefs the column definitions
      * @return the receivers for the specified relation.
      * @throws InvalidRequestException if the relation is invalid
      */
-    private static List<? extends ColumnSpecification> toReceivers(TableMetadata table,
+    private static List<? extends ColumnSpecification> toReceivers(TableResolver tableResolver,
                                                                    List<ColumnMetadata> columnDefs)
                                                                    throws InvalidRequestException
     {
-
+        TableMetadata table = tableResolver.resolveTableMetadata(columnDefs.get(0));
         if (!columnDefs.equals(table.partitionKeyColumns()))
         {
             checkTrue(columnDefs.containsAll(table.partitionKeyColumns()),
@@ -199,6 +200,8 @@ public final class TokenRelation extends Relation
             checkContainsNoDuplicates(columnDefs, "The token() function contains duplicate partition key components");
 
             checkContainsOnly(columnDefs, table.partitionKeyColumns(), "The token() function must contains only partition key components");
+            checkTrue(columnDefs.stream().allMatch(c->c.cfName.equals(table.name) && c.ksName.equals(table.keyspace)),
+                      "The token() function must be applied to the same table");
 
             throw invalidRequest("The token function arguments must be in the partition key order: %s",
                                  Joiner.on(", ").join(ColumnMetadata.toIdentifiers(table.partitionKeyColumns())));

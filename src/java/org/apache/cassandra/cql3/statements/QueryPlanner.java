@@ -197,10 +197,11 @@ public class QueryPlanner
 
     private List<SelectStatement.RawStatement> selectStatements(List<Join.Raw> joins)
     {
+        SelectStatement prepared = raw.prepareRegularSelect(tableResolver, false);
         List<SelectStatement.RawStatement> statements = joins.stream().map(j -> {
             //Selectables are composed of those that are specified in the raw statement, and those that are required by joins.
             Set<Selectable.Raw> selectables = new LinkedHashSet<>();
-            selectables.addAll(rawStatementSelectables(j.getTable()));
+            selectables.addAll(rawStatementSelectables(j.getTable(), prepared.getSelection().getColumns()));
             selectables.addAll(rawStatementJoinSelectables(j.getTable()));
             List<RawSelector> selectors = selectables.stream().map(s -> new RawSelector(s, null)).collect(Collectors.toList());
 
@@ -261,22 +262,14 @@ public class QueryPlanner
                         .collect(Collectors.toList());
     }
 
-    private List<Selectable.Raw> rawStatementSelectables(QualifiedName table)
+    private List<Selectable.Raw> rawStatementSelectables(QualifiedName table, List<ColumnMetadata> allColumns)
     {
-        List<Selectable.Raw> rawIdentifiers = new ArrayList<>();
-        raw.selectClause.forEach(sc -> visitSelectables(sc.selectable, s -> {
-            if (s instanceof Selectable.RawIdentifier)
-            {
-                if (Objects.equals(((Selectable.RawIdentifier) s).getTableAlias(), table.getAlias()))
-                {
-                    rawIdentifiers.add(s);
-                }
-            }
-            else
-            {
-                throw new UnsupportedOperationException("Cannot yet deal with " + s.getClass());
-            }
-        }));
+        List<Selectable.Raw> rawIdentifiers = allColumns.stream()
+                                                        .filter(c -> c.ksName.equals(table.getKeyspace()) &&
+                                                                     c.cfName.equals(table.getName()))
+                                                        .map(c -> Selectable.RawIdentifier.forQuoted(c.name.toString(), table.getAlias()))
+                                                        .collect(Collectors.toList());
+
         return rawIdentifiers;
     }
 

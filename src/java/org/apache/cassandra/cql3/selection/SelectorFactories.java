@@ -21,6 +21,7 @@ import java.util.*;
 
 import com.google.common.collect.Lists;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.QueryOptions;
@@ -72,17 +73,17 @@ final class SelectorFactories implements Iterable<Selector.Factory>
      */
     public static SelectorFactories createFactoriesAndCollectColumnDefinitions(List<Selectable> selectables,
                                                                                List<AbstractType<?>> expectedTypes,
-                                                                               TableMetadata table,
+                                                                               TableResolver tableResolver,
                                                                                List<ColumnMetadata> defs,
                                                                                VariableSpecifications boundNames)
                                                                                throws InvalidRequestException
     {
-        return new SelectorFactories(selectables, expectedTypes, table, defs, boundNames);
+        return new SelectorFactories(selectables, expectedTypes, tableResolver, defs, boundNames);
     }
 
     private SelectorFactories(List<Selectable> selectables,
                               List<AbstractType<?>> expectedTypes,
-                              TableMetadata table,
+                              TableResolver tableResolver,
                               List<ColumnMetadata> defs,
                               VariableSpecifications boundNames)
                               throws InvalidRequestException
@@ -93,7 +94,7 @@ final class SelectorFactories implements Iterable<Selector.Factory>
         {
             Selectable selectable = selectables.get(i);
             AbstractType<?> expectedType = expectedTypes == null ? null : expectedTypes.get(i);
-            Factory factory = selectable.newSelectorFactory(table, expectedType, defs, boundNames);
+            Factory factory = selectable.newSelectorFactory(tableResolver, expectedType, defs, boundNames);
             containsWritetimeFactory |= factory.isWritetimeSelectorFactory();
             containsTTLFactory |= factory.isTTLSelectorFactory();
             if (factory.isAggregateSelectorFactory())

@@ -3181,7 +3181,7 @@ public class SelectTest extends CQLTester
                              "SELECT * FROM %s AS a WHERE a.k1=1");
         assertInvalidMessage("Undefined table alias a for relation a.k1 = 1",
                              "SELECT b.k1 AS b FROM %s AS b WHERE a.k1=1");
-        assertInvalidMessage("Undefined table alias a for relation (a.k1, a.k2) > (1, 'a')",
+        assertInvalidMessage("Undefined table alias a in relation (a.k1, a.k2) > (1, 'a')",
                              "SELECT COUNT(b.k1) AS b FROM %s AS b WHERE (a.k1, a.k2) > (1, 'a')");
         assertInvalidMessage("Undefined table alias <default> for relation k1 = 1",
                              "SELECT a.k1 AS b FROM %s AS a WHERE k1=1");

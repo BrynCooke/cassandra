@@ -25,6 +25,7 @@ import com.google.common.collect.Iterators;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.Term.Terminal;
 import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -770,7 +771,7 @@ public abstract class ColumnCondition
             return new Raw(null, null, inMarker, null, udtField, Operator.IN);
         }
 
-        public ColumnCondition prepare(String keyspace, ColumnMetadata receiver, TableMetadata cfm)
+        public ColumnCondition prepare(String keyspace, ColumnMetadata receiver, TableResolver tableResolver)
         {
             if (receiver.type instanceof CounterColumnType)
                 throw invalidRequest("Conditions on counters are not supported");

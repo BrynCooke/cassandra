@@ -195,7 +195,7 @@ public class SelectStatement implements CQLStatement
                                    VariableSpecifications.empty(),
                                    defaultParameters,
                                    selection,
-                                   StatementRestrictions.empty(StatementType.SELECT, table),
+                                   StatementRestrictions.empty(StatementType.SELECT, TableResolver.forPrimary(table)),
                                    false,
                                    null,
                                    null,
@@ -985,20 +985,24 @@ public class SelectStatement implements CQLStatement
 
         private SelectStatement prepareRegularSelect(boolean forView)
         {
+            return prepareRegularSelect(TableResolver.forPrimary(qualifiedName), forView);
+        }
+        public SelectStatement prepareRegularSelect(TableResolver tableResolver, boolean forView)
+        {
             TableMetadata table = Schema.instance.validateTable(keyspace(), name());
 
-            List<Selectable> selectables = RawSelector.toSelectables(selectClause, table);
+            List<Selectable> selectables = RawSelector.toSelectables(selectClause, tableResolver);
             boolean containsOnlyStaticColumns = selectOnlyStaticColumns(table, selectables);
 
-            StatementRestrictions restrictions = prepareRestrictions(table, bindVariables, containsOnlyStaticColumns, forView);
+            StatementRestrictions restrictions = prepareRestrictions(tableResolver, bindVariables, containsOnlyStaticColumns, forView);
 
             // If we order post-query, the sorted column needs to be in the ResultSet for sorting,
             // even if we don't ultimately ship them to the client (CASSANDRA-4911).
-            Map<ColumnMetadata, Boolean> orderingColumns = getOrderingColumns(table);
+            Map<ColumnMetadata, Boolean> orderingColumns = getOrderingColumns(tableResolver);
             Set<ColumnMetadata> resultSetOrderingColumns = restrictions.keyIsInRelation() ? orderingColumns.keySet()
                                                                                           : Collections.emptySet();
 
-            Selection selection = prepareSelection(table,
+            Selection selection = prepareSelection(tableResolver,
                                                    selectables,
                                                    bindVariables,
                                                    resultSetOrderingColumns,
@@ -1010,7 +1014,7 @@ public class SelectStatement implements CQLStatement
                 validateDistinctSelection(table, selection, restrictions);
             }
 
-            AggregationSpecification aggregationSpec = getAggregationSpecification(table,
+            AggregationSpecification aggregationSpec = getAggregationSpecification(tableResolver,
                                                                                    selection,
                                                                                    restrictions,
                                                                                    parameters.isDistinct);
@@ -1120,7 +1124,7 @@ public class SelectStatement implements CQLStatement
             return tableAlias;
         }
 
-        private Selection prepareSelection(TableMetadata table,
+        private Selection prepareSelection(TableResolver tableResolver,
                                            List<Selectable> selectables,
                                            VariableSpecifications boundNames,
                                            Set<ColumnMetadata> resultSetOrderingColumns,
@@ -1128,7 +1132,7 @@ public class SelectStatement implements CQLStatement
         {
             boolean hasGroupBy = !parameters.groups.isEmpty();
 
-            return Selection.fromSelectors(table,
+            return Selection.fromSelectors(tableResolver,
                                            selectables,
                                            boundNames,
                                            resultSetOrderingColumns,
@@ -1158,7 +1162,7 @@ public class SelectStatement implements CQLStatement
          * Returns the columns used to order the data.
          * @return the columns used to order the data.
          */
-        private Map<ColumnMetadata, Boolean> getOrderingColumns(TableMetadata table)
+        private Map<ColumnMetadata, Boolean> getOrderingColumns(TableResolver tableResolver)
         {
             if (parameters.orderings.isEmpty())
                 return Collections.emptyMap();
@@ -1166,7 +1170,7 @@ public class SelectStatement implements CQLStatement
             Map<ColumnMetadata, Boolean> orderingColumns = new LinkedHashMap<>();
             for (Map.Entry<ColumnMetadata.Raw, Boolean> entry : parameters.orderings.entrySet())
             {
-                orderingColumns.put(entry.getKey().prepare(table), entry.getValue());
+                orderingColumns.put(entry.getKey().prepare(tableResolver), entry.getValue());
             }
             return orderingColumns;
         }
@@ -1174,19 +1178,19 @@ public class SelectStatement implements CQLStatement
         /**
          * Prepares the restrictions.
          *
-         * @param metadata the column family meta data
+         * @param tableResolver the column family meta data
          * @param boundNames the variable specifications
          * @param selectsOnlyStaticColumns {@code true} if the query select only static columns, {@code false} otherwise.
          * @return the restrictions
          * @throws InvalidRequestException if a problem occurs while building the restrictions
          */
-        private StatementRestrictions prepareRestrictions(TableMetadata metadata,
+        private StatementRestrictions prepareRestrictions(TableResolver tableResolver,
                                                           VariableSpecifications boundNames,
                                                           boolean selectsOnlyStaticColumns,
                                                           boolean forView) throws InvalidRequestException
         {
             return new StatementRestrictions(StatementType.SELECT,
-                                             metadata,
+                                             tableResolver,
                                              whereClause,
                                              boundNames,
                                              selectsOnlyStaticColumns,
@@ -1240,13 +1244,13 @@ public class SelectStatement implements CQLStatement
         /**
          * Creates the <code>AggregationSpecification</code>s used to make the aggregates.
          *
-         * @param metadata the table metadata
+         * @param tableResolver the table metadata
          * @param selection the selection
          * @param restrictions the restrictions
          * @param isDistinct <code>true</code> if the query is a DISTINCT one.
          * @return the <code>AggregationSpecification</code>s used to make the aggregates
          */
-        private AggregationSpecification getAggregationSpecification(TableMetadata metadata,
+        private AggregationSpecification getAggregationSpecification(TableResolver tableResolver,
                                                                      Selection selection,
                                                                      StatementRestrictions restrictions,
                                                                      boolean isDistinct)
@@ -1257,10 +1261,11 @@ public class SelectStatement implements CQLStatement
 
             int clusteringPrefixSize = 0;
 
-            Iterator<ColumnMetadata> pkColumns = metadata.primaryKeyColumns().iterator();
+            //For now only handle aggregates on the primary table
+            Iterator<ColumnMetadata> pkColumns = tableResolver.primary().primaryKeyColumns().iterator();
             for (ColumnMetadata.Raw raw : parameters.groups)
             {
-                ColumnMetadata def = raw.prepare(metadata);
+                ColumnMetadata def = raw.prepare(tableResolver);
 
                 checkTrue(def.isPartitionKey() || def.isClusteringColumn(),
                           "Group by is currently only supported on the columns of the PRIMARY KEY, got %s", def.name);
@@ -1291,7 +1296,7 @@ public class SelectStatement implements CQLStatement
             checkFalse(clusteringPrefixSize > 0 && isDistinct,
                        "Grouping on clustering columns is not allowed for SELECT DISTINCT queries");
 
-            return AggregationSpecification.aggregatePkPrefix(metadata.comparator, clusteringPrefixSize);
+            return AggregationSpecification.aggregatePkPrefix(tableResolver.primary().comparator, clusteringPrefixSize);
         }
 
         private Comparator<List<ByteBuffer>> getOrderingComparator(Selection selection,

@@ -18,6 +18,7 @@
 package org.apache.cassandra.cql3.statements.schema;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 
@@ -85,7 +86,7 @@ public class IndexTarget
             // same syntax as an index on a regular column (i.e. the 'values' in
             // 'CREATE INDEX on table(values(collection));' is optional). So we correct the target type
             // when the target column is a collection & the target type is SIMPLE.
-            ColumnMetadata columnDef = column.prepare(table);
+            ColumnMetadata columnDef = column.prepare(TableResolver.forPrimary(table));
             Type actualType = (type == Type.SIMPLE && columnDef.type.isCollection()) ? Type.VALUES : type;
             return new IndexTarget(columnDef.name, actualType);
         }

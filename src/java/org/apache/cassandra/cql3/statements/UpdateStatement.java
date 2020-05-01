@@ -177,7 +177,7 @@ public class UpdateStatement extends ModificationStatement
             boolean applyOnlyToStaticColumns = !hasClusteringColumnsSet && appliesOnlyToStaticColumns(operations, conditions);
 
             StatementRestrictions restrictions = new StatementRestrictions(type,
-                                                                           metadata,
+                                                                           TableResolver.forPrimary(metadata),
                                                                            whereClause.build(),
                                                                            bindVariables,
                                                                            applyOnlyToStaticColumns,
@@ -245,7 +245,7 @@ public class UpdateStatement extends ModificationStatement
             boolean applyOnlyToStaticColumns = !hasClusteringColumnsSet && appliesOnlyToStaticColumns(operations, conditions);
 
             StatementRestrictions restrictions = new StatementRestrictions(type,
-                                                                           metadata,
+                                                                           TableResolver.forPrimary(metadata),
                                                                            whereClause.build(),
                                                                            bindVariables,
                                                                            applyOnlyToStaticColumns,
@@ -297,7 +297,6 @@ public class UpdateStatement extends ModificationStatement
                                                         Attributes attrs)
         {
             Operations operations = new Operations(type);
-
             for (Pair<ColumnMetadata.Raw, Operation.RawUpdate> entry : updates)
             {
                 ColumnMetadata def = getColumnDefinition(metadata, entry.left);

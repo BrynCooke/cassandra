@@ -930,11 +930,11 @@ public abstract class ModificationStatement implements CQLStatement
             checkNull(attrs.timestamp, "Cannot provide custom timestamp for conditional updates");
 
             ColumnConditions.Builder builder = ColumnConditions.newBuilder();
-
+            TableResolver tableResolver = TableResolver.forPrimary(metadata);
             for (Pair<ColumnMetadata.Raw, ColumnCondition.Raw> entry : conditions)
             {
-                ColumnMetadata def = entry.left.prepare(metadata);
-                ColumnCondition condition = entry.right.prepare(keyspace(), def, metadata);
+                ColumnMetadata def = entry.left.prepare(tableResolver);
+                ColumnCondition condition = entry.right.prepare(keyspace(), def, tableResolver);
                 condition.collectMarkerSpecification(bindVariables);
 
                 checkFalse(def.isPrimaryKeyColumn(), "PRIMARY KEY column '%s' cannot have IF conditions", def.name);
@@ -968,7 +968,7 @@ public abstract class ModificationStatement implements CQLStatement
                 throw new InvalidRequestException(CUSTOM_EXPRESSIONS_NOT_ALLOWED);
 
             boolean applyOnlyToStaticColumns = appliesOnlyToStaticColumns(operations, conditions);
-            return new StatementRestrictions(type, metadata, where, boundNames, applyOnlyToStaticColumns, false, false);
+            return new StatementRestrictions(type, TableResolver.forPrimary(metadata), where, boundNames, applyOnlyToStaticColumns, false, false);
         }
 
         /**
@@ -980,7 +980,7 @@ public abstract class ModificationStatement implements CQLStatement
          */
         protected static ColumnMetadata getColumnDefinition(TableMetadata metadata, ColumnMetadata.Raw rawId)
         {
-            return rawId.prepare(metadata);
+            return rawId.prepare(TableResolver.forPrimary(metadata));
         }
 
         public List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> getConditions()
