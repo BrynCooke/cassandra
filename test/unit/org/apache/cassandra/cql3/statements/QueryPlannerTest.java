@@ -25,34 +25,35 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-import org.junit.BeforeClass;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.cassandra.SchemaLoader;
-import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.schema.KeyspaceParams;
 
 import static org.apache.cassandra.cql3.statements.Join.Type.Inner;
 import static org.apache.cassandra.cql3.statements.Join.Type.Left;
 import static org.apache.cassandra.cql3.statements.Join.Type.Primary;
 
-public class QueryPlannerTest
+public class QueryPlannerTest extends CQLTester
 {
 
-    private static final String KEYSPACE = "ks";
-
-    @BeforeClass
-    public static void setupClass()
+    @Before
+    public void setupClass()
     {
-        DatabaseDescriptor.daemonInitialization();
-        SchemaLoader.prepareServer();
-        SchemaLoader.createKeyspace(KEYSPACE, KeyspaceParams.simple(1));
-        QueryProcessor.executeOnceInternal("CREATE TABLE ks.customers (id int, id2 int, id3 int, a int, b int, c int, primary key (id, id2, id3))");
-        QueryProcessor.executeOnceInternal("CREATE TABLE ks.orders (id int, customer_id int, customer_id2 int, employee_id int, warehouse_id int, primary key (id))");
-        QueryProcessor.executeOnceInternal("CREATE TABLE ks.employees (id int, primary key (id))");
-        QueryProcessor.executeOnceInternal("CREATE TABLE ks.warehouses (id int, primary key (id))");
+        createKeyspace("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1};");
+        createTable( "CREATE TABLE IF NOT EXISTS ks.customers (id int, id2 int, id3 int, a int, b int, c int, primary key (id, id2, id3))");
+        createTable( "CREATE TABLE IF NOT EXISTS ks.orders (id int, customer_id int, customer_id2 int, employee_id int, warehouse_id int, primary key (id))");
+        createTable( "CREATE TABLE IF NOT EXISTS ks.employees (id int, primary key (id))");
+        createTable( "CREATE TABLE IF NOT EXISTS ks.warehouses (id int, primary key (id))");
+    }
+
+    @After
+    public void cleanUp() throws Throwable
+    {
+        execute("DROP KEYSPACE ks;");
     }
 
     @Test

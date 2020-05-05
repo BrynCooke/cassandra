@@ -448,7 +448,7 @@ public class QueryProcessor implements QueryHandler
             throw new InvalidRequestException(String.format("Prepared statement of size %d bytes is larger than allowed maximum of %d MB: %s...",
                                                             statementSize,
                                                             DatabaseDescriptor.getPreparedStatementsCacheSizeMB(),
-                                                            queryString.substring(0, 200)));
+                                                            queryString.substring(0, Math.min(queryString.length(),200))));
         MD5Digest statementId = computeId(queryString, keyspace);
         preparedStatements.put(statementId, prepared);
         SystemKeyspace.writePreparedStatement(keyspace, statementId, queryString);
