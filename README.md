@@ -2,11 +2,12 @@ Apache Cassandra JOIN POC
 -----------------
 
 Note: THIS IN NO WAY REPRESENTS CODE THAT WOULD MAKE IT IN TO A C* PR.
+
 It takes a bunch of shortcuts to allow evalutation of:
 1. is this possible?
 2. what is performance like without optimisation?
 
-You can load the northwind database by runnin ght following command:
+You can load the northwind database by running the following command:
 
 `bin/cqlsh < northwind.cql`
 
