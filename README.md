@@ -1,7 +1,7 @@
 Apache Cassandra JOIN POC
 -----------------
 
-Note: This in no way represents the code that would be submitted PR to C*.
+Note: THIS IN NO WAY REPRESENTS CODE THAT WOULD MAKE IT IN TO A C* PR.
 It takes a bunch of shortcuts to allow evalutation of:
 1. is this possible?
 2. what is performance like without optimisation?
