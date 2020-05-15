@@ -18,12 +18,14 @@
 
 package org.apache.cassandra.cql3.statements;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
+import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -37,6 +39,7 @@ public class TableResolver
 {
     private Map<ColumnIdentifier, QualifiedName> tables;
     private Schema schema = Schema.instance;
+    private TableMetadata primary;
 
     public TableResolver(QualifiedName primary, List<Join.Raw> joinClauses)
     {
@@ -46,6 +49,11 @@ public class TableResolver
         for (Join.Raw join : joinClauses)
         {
             QualifiedName joinTable = join.getTable();
+            if(joinTable.getKeyspace() == null)
+            {
+                joinTable.setKeyspace(primary.getKeyspace(), false);
+            }
+            schema.validateTable(joinTable.getKeyspace(), joinTable.getName());
             QualifiedName previous = tables.put(joinTable.getAlias(), joinTable);
             if (previous != null)
             {
@@ -58,24 +66,68 @@ public class TableResolver
         }
     }
 
+    public TableResolver(TableMetadata primary)
+    {
+        this.primary = primary;
+    }
+
+    public static TableResolver ofPrimary(TableMetadata table)
+    {
+        return new TableResolver(table);
+    }
+
     public QualifiedName resolveTable(ColumnIdentifier alias)
     {
         return tables.get(alias);
     }
 
-    public TableMetadata resolveTableMetadata(ColumnIdentifier alias)
+    public TableMetadata resolveTableMetadata(QualifiedName qualifiedName)
     {
-        QualifiedName qualifiedName = tables.get(alias);
+        if(primary != null) {
+            return primary;
+        }
         if(qualifiedName == null) {
             return null;
         }
         return schema.getTableMetadata(qualifiedName.getKeyspace(), qualifiedName.getName());
     }
 
-    public ColumnMetadata resolveColumn(ColumnMetadata.Raw left)
+    public TableMetadata resolveTableMetadata(ColumnIdentifier alias)
     {
-        TableMetadata tableMetadata = resolveTableMetadata(left.getTableAlias());
-        return tableMetadata.getColumn(left.getIdentifier(tableMetadata));
+        if(primary != null) {
+            return primary;
+        }
+        return resolveTableMetadata(tables.get(alias));
+    }
+
+    public TableMetadata resolveTableMetadata(Selectable.Raw selectable)
+    {
+        return resolveTableMetadata(getAlias(selectable));
+    }
+
+
+    public TableMetadata resolveTableMetadata(RawSelector s)
+    {
+        return resolveTableMetadata(s.selectable);
+    }
+
+    public ColumnIdentifier getAlias(Selectable.Raw selectable)
+    {
+        if(selectable instanceof ColumnMetadata.Raw.Literal)
+        {
+            return ((ColumnMetadata.Raw.Literal) selectable).getTableAlias();
+        }
+        if(selectable instanceof Selectable.RawIdentifier)
+        {
+            return ((Selectable.RawIdentifier) selectable).getTableAlias();
+        }
+        return null;
+    }
+
+    public ColumnMetadata resolveColumn(ColumnMetadata.Raw selectable)
+    {
+        TableMetadata tableMetadata = resolveTableMetadata(selectable.getTableAlias());
+        return tableMetadata.getColumn(selectable.getIdentifier(tableMetadata));
     }
 
     public ColumnMetadata resolveColumn(Selectable.RawIdentifier selectable)
@@ -95,4 +147,5 @@ public class TableResolver
         }
         throw new UnsupportedOperationException("Cannot resolve selectable of type " + selectable.getClass());
     }
+
 }

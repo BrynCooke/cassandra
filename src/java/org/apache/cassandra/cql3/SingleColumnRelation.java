@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.Raw;
@@ -180,7 +181,7 @@ public final class SingleColumnRelation extends Relation
     @Override
     protected Restriction newEQRestriction(TableMetadata table, VariableSpecifications boundNames)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
         if (mapKey == null)
         {
             Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
@@ -195,7 +196,7 @@ public final class SingleColumnRelation extends Relation
     @Override
     protected Restriction newINRestriction(TableMetadata table, VariableSpecifications boundNames)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
         List<? extends ColumnSpecification> receivers = toReceivers(columnDef);
         List<Term> terms = toTerms(receivers, inValues, table.keyspace, boundNames);
         if (terms == null)
@@ -217,7 +218,7 @@ public final class SingleColumnRelation extends Relation
                                               Bound bound,
                                               boolean inclusive)
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
 
         if (columnDef.type.referencesDuration())
         {
@@ -236,7 +237,7 @@ public final class SingleColumnRelation extends Relation
                                                  VariableSpecifications boundNames,
                                                  boolean isKey) throws InvalidRequestException
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
         Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
         return new SingleColumnRestriction.ContainsRestriction(columnDef, term, isKey);
     }
@@ -245,7 +246,7 @@ public final class SingleColumnRelation extends Relation
     protected Restriction newIsNotRestriction(TableMetadata table,
                                               VariableSpecifications boundNames) throws InvalidRequestException
     {
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
         // currently enforced by the grammar
         assert value == Constants.NULL_LITERAL : "Expected null literal for IS NOT relation: " + this.toString();
         return new SingleColumnRestriction.IsNotNullRestriction(columnDef);
@@ -257,7 +258,7 @@ public final class SingleColumnRelation extends Relation
         if (mapKey != null)
             throw invalidRequest("%s can't be used with collections.", operator());
 
-        ColumnMetadata columnDef = entity.prepare(table);
+        ColumnMetadata columnDef = entity.prepare(table, TableResolver.ofPrimary(table));
         Term term = toTerm(toReceivers(columnDef), value, table.keyspace, boundNames);
 
         return new SingleColumnRestriction.LikeRestriction(columnDef, operator, term);

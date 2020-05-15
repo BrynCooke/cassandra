@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.MultiColumnRaw;
@@ -202,7 +203,7 @@ public class MultiColumnRelation extends Relation
         int previousPosition = -1;
         for (ColumnMetadata.Raw raw : getEntities())
         {
-            ColumnMetadata def = raw.prepare(table);
+            ColumnMetadata def = raw.prepare(table, TableResolver.ofPrimary(table));
             checkTrue(def.isClusteringColumn(), "Multi-column relations can only be applied to clustering columns but was applied to: %s", def.name);
             checkFalse(names.contains(def), "Column \"%s\" appeared twice in a relation: %s", def.name, this);
 

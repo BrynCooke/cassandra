@@ -28,6 +28,7 @@ import com.google.common.collect.Lists;
 
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.statements.QueryPlanner;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -571,4 +572,28 @@ public abstract class Selection
         }
 
     }
+
+    public static Selection forQueryPlan(QueryPlanner.QueryPlan queryPlan)
+    {
+        List<Selectable> selectables = queryPlan.getSelectables();
+        List<ColumnMetadata> selectedColumns = new ArrayList<>();
+        TableMetadata table = queryPlan.getPrimaryTable();
+
+        SelectorFactories factories = SelectorFactories.createFactoriesAndCollectColumnDefinitions(selectables, null, table, selectedColumns, queryPlan.getBoundNames());
+        SelectionColumnMapping mapping = collectColumnMappings(table, factories);
+
+        Set<ColumnMetadata> filteredOrderingColumns = filterOrderingColumns(queryPlan.getOrderingColumns(),
+                                                                            selectedColumns,
+                                                                            factories,
+                                                                            queryPlan.isJson());
+
+        return new SelectionWithProcessing(table,
+                                             selectedColumns,
+                                             filteredOrderingColumns,
+                                             queryPlan.getNonPKRestrictedColumns(),
+                                             mapping,
+                                             factories,
+                                             queryPlan.isJson());
+    }
+
 }

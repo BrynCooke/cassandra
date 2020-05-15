@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 
 import com.google.common.base.Joiner;
 
+import org.apache.cassandra.cql3.statements.TableResolver;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.cql3.Term.Raw;
@@ -174,7 +175,7 @@ public final class TokenRelation extends Relation
     {
         List<ColumnMetadata> columnDefs = new ArrayList<>(entities.size());
         for ( ColumnMetadata.Raw raw : entities)
-            columnDefs.add(raw.prepare(table));
+            columnDefs.add(raw.prepare(table, TableResolver.ofPrimary(table)));
         return columnDefs;
     }
 

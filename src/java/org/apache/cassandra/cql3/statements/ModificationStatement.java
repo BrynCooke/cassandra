@@ -933,7 +933,7 @@ public abstract class ModificationStatement implements CQLStatement
 
             for (Pair<ColumnMetadata.Raw, ColumnCondition.Raw> entry : conditions)
             {
-                ColumnMetadata def = entry.left.prepare(metadata);
+                ColumnMetadata def = entry.left.prepare(metadata, TableResolver.ofPrimary(metadata));
                 ColumnCondition condition = entry.right.prepare(keyspace(), def, metadata);
                 condition.collectMarkerSpecification(bindVariables);
 
@@ -980,7 +980,7 @@ public abstract class ModificationStatement implements CQLStatement
          */
         protected static ColumnMetadata getColumnDefinition(TableMetadata metadata, ColumnMetadata.Raw rawId)
         {
-            return rawId.prepare(metadata);
+            return rawId.prepare(metadata, TableResolver.ofPrimary(metadata));
         }
 
         public List<Pair<ColumnMetadata.Raw, ColumnCondition.Raw>> getConditions()
